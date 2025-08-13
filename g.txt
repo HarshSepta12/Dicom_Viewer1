@@ -1,0 +1,30 @@
+Let us say a patient was admitted to a hospital with 
+some chest pains. The attending physician may order an MRI scan,
+ and when this request is recorded on 
+the Hospital Information System (HIS), an electronic request is
+ often transmitted to the Radiology Information System (RIS) 
+located in the imaging centre. This request typically comprises
+ of information about where the request came from, who ordered it,
+ the details of the patient, the type of imaging modality 
+requested, etc. Once the booking is done, the patient 
+then is sent for the scan to the imaging centre.
+ After a scan has been completed, a set of DICOM-compliant images
+ are created from the raw data and is referred to as a “Study”.
+ A study may itself consist of several acquisitions depending 
+on the scan configurations, and each of these acquisitions is 
+referred to as a “Series”. Each series will consist of several
+ images, and each of these images are individually referred 
+to as a “DICOM Information Object”.
+After the scanning procedure has been completed, 
+all the images are transmitted for archival to 
+a PACS system (Picture Archival and Communication System). 
+The scanned images may be reviewed for quality before being
+ transmitted to a PACS system, and the reviewing technologist 
+may order a scan again if they are not satisfactory. The archived images can then be retrieved from the 
+PACS system to a workstation for viewing by a radiologist. The radiologist may either view the images 
+directly on the screen or print these images on film. Later, she may add additional comments about her 
+observations on a report. Once she completes this process, the changes are merged with the original study 
+on the PACS system. An electronic message is also transmitted back to the RIS indicating that the modality 
+request has been completed. Information may also be transmitted back to the originating HIS along with some 
+of the key images to assist in intervention by a cardiologist if necessary.
+https://www.youtube.com/watch?v=czApoO5N9K8

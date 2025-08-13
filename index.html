@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Modern DICOM Viewer</title>
+    <title>Modern DICOM Viewer with Cine</title>
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
@@ -300,7 +300,6 @@
         padding: 0 20px;
         gap: 5px;
         border-bottom: 1px solid #2d3748;
-        /* overflow-x: auto; */
       }
 
       .tool-group {
@@ -423,7 +422,7 @@
       }
 
       .viewport-info-bl {
-        bottom: 15px;
+        bottom: 70px;
         left: 15px;
         color: #fbbf24;
         font-size: 12px;
@@ -431,12 +430,166 @@
       }
 
       .viewport-info-br {
-        bottom: 15px;
+        bottom: 70px;
         right: 15px;
         color: #fbbf24;
         font-size: 12px;
         font-family: monospace;
         text-align: right;
+      }
+
+      /* Cine Controls Styling */
+      .cine-controls {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
+        padding: 20px;
+        z-index: 20;
+        transition: opacity 0.3s ease;
+      }
+
+      .cine-controls.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .cine-controls-container {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .cine-buttons {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 15px;
+      }
+
+      .cine-btn {
+        width: 50px;
+        height: 50px;
+        background: rgba(59, 130, 246, 0.9);
+        border: 2px solid #3b82f6;
+        border-radius: 50%;
+        color: white;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+      }
+
+      .cine-btn:hover {
+        background: rgba(59, 130, 246, 1);
+        transform: scale(1.1);
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+      }
+
+      .cine-btn.play-pause {
+        width: 60px;
+        height: 60px;
+        font-size: 24px;
+        background: rgba(16, 185, 129, 0.9);
+        border-color: #10b981;
+      }
+
+      .cine-btn.play-pause:hover {
+        background: rgba(16, 185, 129, 1);
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+      }
+
+      .cine-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .cine-progress-container {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+      }
+
+      .cine-time-display {
+        color: #fbbf24;
+        font-family: monospace;
+        font-size: 14px;
+        min-width: 80px;
+        text-align: center;
+      }
+
+      .cine-progress {
+        flex: 1;
+        height: 8px;
+        background: rgba(55, 65, 81, 0.8);
+        border-radius: 4px;
+        overflow: hidden;
+        cursor: pointer;
+        position: relative;
+      }
+
+      .cine-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #3b82f6, #10b981);
+        width: 0%;
+        transition: width 0.1s ease;
+        border-radius: 4px;
+      }
+
+      .cine-progress-thumb {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 16px;
+        background: #10b981;
+        border-radius: 50%;
+        cursor: grab;
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        transition: transform 0.2s ease;
+      }
+
+      .cine-progress-thumb:hover {
+        transform: translateY(-50%) scale(1.2);
+      }
+
+      .cine-speed-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .speed-label {
+        color: #a0aec0;
+        font-size: 12px;
+        min-width: 40px;
+      }
+
+      .speed-btn {
+        padding: 6px 12px;
+        background: rgba(55, 65, 81, 0.8);
+        border: 1px solid #4b5563;
+        border-radius: 4px;
+        color: #e5e7eb;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .speed-btn:hover {
+        background: rgba(75, 85, 99, 0.9);
+      }
+
+      .speed-btn.active {
+        background: rgba(59, 130, 246, 0.9);
+        border-color: #3b82f6;
       }
 
       .status-bar {
@@ -551,12 +704,34 @@
       .series-collapsed .expand-icon {
         transform: rotate(-90deg);
       }
+
+      /* Auto-hide controls */
+      .viewer-area:hover .cine-controls.auto-hide {
+        opacity: 1;
+        pointer-events: all;
+      }
+
+      .cine-controls.auto-hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /* Grid layout specific styles */
+      .grid-viewport {
+        border: 1px solid #374151;
+        position: relative;
+      }
+
+      .grid-viewport.active {
+        border-color: #10b981;
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+      }
     </style>
   </head>
   <body>
     <div class="app-header">
       <div class="app-logo">D</div>
-      <div class="app-title">DICOM Viewer</div>
+      <div class="app-title">DICOM Viewer with Cine</div>
     </div>
 
     <div class="main-container">
@@ -745,7 +920,8 @@
             ></div>
           </div>
 
-          <!-- <div id="dicomImage" style="width: 100%; height: 100%; display: none;"></div> -->
+          <!-- <div id="dicomImage" class="dicom-viewport"></div>
+<div id="viewportContainer"></div> -->
 
           <div class="viewport-overlay viewport-info-tl" id="topLeft">
             Patient: John Doe<br />
@@ -765,6 +941,53 @@
           <div class="viewport-overlay viewport-info-br" id="bottomRight">
             WW/WC: 400/40<br />
             Zoom: 1.0x
+          </div>
+
+          <!-- Cine Controls -->
+          <div class="cine-controls" id="cineControls">
+            <div class="cine-controls-container">
+              <!-- Playback Controls -->
+              <div class="cine-buttons">
+                <button class="cine-btn" id="firstBtn" title="First Image">
+                  <i class="fas fa-step-backward"></i>
+                </button>
+                <button class="cine-btn" id="prevBtn" title="Previous">
+                  <i class="fas fa-chevron-left"></i>
+                </button>
+                <button class="cine-btn play-pause" id="playPauseBtn" title="Play/Pause">
+                  <i class="fas fa-play"></i>
+                </button>
+                <button class="cine-btn" id="nextBtn" title="Next">
+                  <i class="fas fa-chevron-right"></i>
+                </button>
+                <button class="cine-btn" id="lastBtn" title="Last Image">
+                  <i class="fas fa-step-forward"></i>
+                </button>
+              </div>
+
+              <!-- Progress Bar -->
+              <div class="cine-progress-container">
+                <div class="cine-time-display" id="currentTime">1 / 25</div>
+                <div class="cine-progress" id="progressBar">
+                  <div class="cine-progress-fill" id="progressFill"></div>
+                  <div class="cine-progress-thumb" id="progressThumb"></div>
+                </div>
+                <div class="cine-time-display" id="totalTime">25</div>
+              </div>
+
+              <!-- Speed Controls -->
+              <div class="cine-speed-controls">
+                <span class="speed-label">Speed:</span>
+                <button class="speed-btn" data-speed="0.25">0.25x</button>
+                <button class="speed-btn" data-speed="0.5">0.5x</button>
+                <button class="speed-btn active" data-speed="1">1x</button>
+                <button class="speed-btn" data-speed="2">2x</button>
+                <button class="speed-btn" data-speed="4">4x</button>
+                <button class="cine-btn" id="loopBtn" title="Toggle Loop" style="margin-left: 15px;">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -796,6 +1019,20 @@
       let currentImageIndex = 0;
       let loaded = false;
 
+      // Cine playback variables
+      let isPlaying = false;
+      let playbackInterval = null;
+      let playbackSpeed = 1;
+      let isLooping = true;
+      let playDirection = 1; // 1 for forward, -1 for backward
+
+      // Grid layout variables
+      let currentLayout = "1x1";
+      let gridViewports = [];
+      let activeGridViewport = 0;
+      let currentSeriesImages = [];
+
+
       // DOM elements
       const viewport = document.getElementById("viewport");
       const dicomImage = document.getElementById("dicomImage");
@@ -807,7 +1044,247 @@
       const loadingOverlay = document.getElementById("loadingOverlay");
       const statusText = document.getElementById("statusText");
       const loadingText = document.getElementById("loadingText");
-      let currentLayout = "1x1"; // default
+
+      // Cine control elements
+      const cineControls = document.getElementById("cineControls");
+      const playPauseBtn = document.getElementById("playPauseBtn");
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+      const firstBtn = document.getElementById("firstBtn");
+      const lastBtn = document.getElementById("lastBtn");
+      const loopBtn = document.getElementById("loopBtn");
+      const progressBar = document.getElementById("progressBar");
+      const progressFill = document.getElementById("progressFill");
+      const progressThumb = document.getElementById("progressThumb");
+      const currentTimeDisplay = document.getElementById("currentTime");
+      const totalTimeDisplay = document.getElementById("totalTime");
+
+      // Cine control event listeners
+      playPauseBtn.addEventListener("click", togglePlayback);
+      prevBtn.addEventListener("click", () => changeImage(-1));
+      nextBtn.addEventListener("click", () => changeImage(1));
+      firstBtn.addEventListener("click", () => goToImage(0));
+      lastBtn.addEventListener("click", () => {
+        const series = allSeries[currentSeriesId];
+        if (series) goToImage(series.images.length - 1);
+      });
+      loopBtn.addEventListener("click", toggleLoop);
+
+      // Speed control buttons
+      document.querySelectorAll(".speed-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const speed = parseFloat(btn.dataset.speed);
+          if (speed) setPlaybackSpeed(speed);
+        });
+      });
+
+      // Progress bar interactions
+      progressBar.addEventListener("click", handleProgressClick);
+      
+      let isDragging = false;
+      progressThumb.addEventListener("mousedown", startDrag);
+      document.addEventListener("mousemove", handleDrag);
+      document.addEventListener("mouseup", endDrag);
+
+document.addEventListener('DOMContentLoaded', function() {
+  if (dicomImage) {
+    cornerstone.enable(dicomImage);
+    activeViewport = dicomImage;
+  }
+});
+
+
+
+      function togglePlayback() {
+        if (!currentSeriesId || !allSeries[currentSeriesId]) return;
+        
+        if (isPlaying) {
+          stopPlayback();
+        } else {
+          startPlayback();
+        }
+      }
+
+      function startPlayback() {
+        const series = allSeries[currentSeriesId];
+        if (!series || series.images.length <= 1) return;
+
+        isPlaying = true;
+        playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+        
+        const frameRate = 1000 / (10 * playbackSpeed); // Base 10 FPS
+        
+        // Clear any existing interval first
+        if (playbackInterval) {
+          clearInterval(playbackInterval);
+        }
+        
+        playbackInterval = setInterval(() => {
+          const series = allSeries[currentSeriesId];
+          if (!series) {
+            stopPlayback();
+            return;
+          }
+
+          let nextIndex = currentImageIndex + playDirection;
+          
+          if (nextIndex >= series.images.length) {
+            if (isLooping) {
+              nextIndex = 0;
+            } else {
+              stopPlayback();
+              return;
+            }
+          } else if (nextIndex < 0) {
+            if (isLooping) {
+              nextIndex = series.images.length - 1;
+            } else {
+              stopPlayback();
+              return;
+            }
+          }
+          
+          selectSeries(currentSeriesId, nextIndex);
+        }, frameRate);
+      }
+
+      function stopPlayback() {
+        isPlaying = false;
+        playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+        
+        if (playbackInterval) {
+          clearInterval(playbackInterval);
+          playbackInterval = null;
+        }
+      }
+
+      function setPlaybackSpeed(speed) {
+        playbackSpeed = speed;
+        
+        // Update active speed button
+        document.querySelectorAll(".speed-btn").forEach(btn => {
+          btn.classList.remove("active");
+          if (parseFloat(btn.dataset.speed) === speed) {
+            btn.classList.add("active");
+          }
+        });
+        
+        // Restart playback with new speed if currently playing
+        if (isPlaying) {
+          stopPlayback();
+          setTimeout(() => startPlayback(), 100); // Small delay to ensure clean restart
+        }
+      }
+
+      function toggleLoop() {
+        isLooping = !isLooping;
+        loopBtn.style.opacity = isLooping ? "1" : "0.5";
+        loopBtn.style.background = isLooping ? "rgba(16, 185, 129, 0.9)" : "rgba(59, 130, 246, 0.9)";
+      }
+
+      function goToImage(index) {
+        const series = allSeries[currentSeriesId];
+        if (!series) return;
+        
+        const clampedIndex = Math.max(0, Math.min(series.images.length - 1, index));
+        selectSeries(currentSeriesId, clampedIndex);
+      }
+
+      function updateCineControls() {
+        const series = allSeries[currentSeriesId];
+        if (!series) {
+          cineControls.style.display = "none";
+          return;
+        }
+
+        cineControls.style.display = "block";
+        
+        // Update progress
+        const progress = series.images.length > 1 ? (currentImageIndex / (series.images.length - 1)) * 100 : 0;
+        progressFill.style.width = progress + "%";
+        progressThumb.style.left = progress + "%";
+        
+        // Update time displays
+        currentTimeDisplay.textContent = `${currentImageIndex + 1} / ${series.images.length}`;
+        totalTimeDisplay.textContent = series.images.length.toString();
+        
+        // Update button states
+        firstBtn.disabled = currentImageIndex === 0;
+        prevBtn.disabled = currentImageIndex === 0 && !isLooping;
+        nextBtn.disabled = currentImageIndex === series.images.length - 1 && !isLooping;
+        lastBtn.disabled = currentImageIndex === series.images.length - 1;
+        
+        // Show/hide controls based on series length
+        const shouldShow = series.images.length > 1;
+        cineControls.style.display = shouldShow ? "block" : "none";
+      }
+
+      function handleProgressClick(e) {
+        if (isDragging) return;
+        
+        const rect = progressBar.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+        
+        const series = allSeries[currentSeriesId];
+        if (series) {
+          const targetIndex = Math.round(percentage * (series.images.length - 1));
+          goToImage(targetIndex);
+        }
+      }
+
+      function startDrag(e) {
+        e.preventDefault();
+        isDragging = true;
+        progressThumb.style.cursor = "grabbing";
+      }
+
+      function handleDrag(e) {
+        if (!isDragging) return;
+        
+        const rect = progressBar.getBoundingClientRect();
+        const dragX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const percentage = dragX / rect.width;
+        
+        const series = allSeries[currentSeriesId];
+        if (series) {
+          const targetIndex = Math.round(percentage * (series.images.length - 1));
+          goToImage(targetIndex);
+        }
+      }
+
+      function endDrag() {
+        isDragging = false;
+        progressThumb.style.cursor = "grab";
+      }
+
+      // Auto-hide cine controls
+      let controlsTimeout;
+      const viewerArea = document.querySelector(".viewer-area");
+      
+      function showCineControls() {
+        cineControls.classList.remove("auto-hide");
+        clearTimeout(controlsTimeout);
+        
+        controlsTimeout = setTimeout(() => {
+          if (!isPlaying) {
+            cineControls.classList.add("auto-hide");
+          }
+        }, 3000);
+      }
+
+      function hideCineControls() {
+        if (!isPlaying) {
+          cineControls.classList.add("auto-hide");
+        }
+      }
+
+      viewerArea.addEventListener("mousemove", showCineControls);
+      viewerArea.addEventListener("mouseleave", hideCineControls);
+      cineControls.addEventListener("mouseenter", () => {
+        clearTimeout(controlsTimeout);
+        cineControls.classList.remove("auto-hide");
+      });
 
       // Drag and drop functionality
       uploadArea.addEventListener("dragover", (e) => {
@@ -874,7 +1351,6 @@
 
       // File upload handling with proper series grouping
       function handleFileUpload(files) {
-        //  console.log('Files received:', files.length);
         showLoading(true);
         updateStatus(`Processing ${files.length} files...`);
 
@@ -889,8 +1365,6 @@
             file.size > 1024
           );
         });
-
-        //  console.log('DICOM files found:', dicomFiles.length);
 
         if (dicomFiles.length === 0) {
           showError(
@@ -920,7 +1394,6 @@
               const arrayBuffer = e.target.result;
               const byteArray = new Uint8Array(arrayBuffer);
 
-              // Try to parse DICOM header
               let dataSet;
               try {
                 dataSet = dicomParser.parseDicom(byteArray);
@@ -930,7 +1403,6 @@
                   file.name,
                   parseError
                 );
-                // Skip this file
                 processedFiles++;
                 updateProgress((processedFiles / files.length) * 100);
                 loadingText.textContent = `Processing DICOM files... (${processedFiles}/${files.length})`;
@@ -941,12 +1413,9 @@
                 return;
               }
 
-              // Add file to cornerstone file manager
               const imageId =
                 cornerstoneWADOImageLoader.wadouri.fileManager.add(file);
-              // console.log('Added file to manager:', file.name, 'imageId:', imageId);
 
-              // Extract DICOM metadata for series grouping
               const seriesInstanceUID =
                 getMetadataValue(dataSet, "x0020000e") ||
                 `unknown_series_${Math.random().toString(36).substr(2, 9)}`;
@@ -968,7 +1437,6 @@
               const studyTime = getMetadataValue(dataSet, "x00080030") || "";
               const modality = getMetadataValue(dataSet, "x00080060") || "UN";
 
-              // Create series key for grouping
               const seriesKey = `${studyInstanceUID}_${seriesInstanceUID}`;
 
               if (!tempSeries[seriesKey]) {
@@ -1028,12 +1496,10 @@
           return;
         }
 
-        // Sort images within each series by instance number
         Object.values(tempSeries).forEach((series) => {
           series.images.sort((a, b) => a.instanceNumber - b.instanceNumber);
         });
 
-        // Merge with existing series
         allSeries = { ...allSeries, ...tempSeries };
 
         updateStatus(
@@ -1043,7 +1509,6 @@
         );
         createSeriesUI();
 
-        // Load first series if none is currently selected
         if (!currentSeriesId && Object.keys(allSeries).length > 0) {
           const firstSeriesKey = Object.keys(allSeries)[0];
           selectSeries(firstSeriesKey, 0);
@@ -1070,15 +1535,15 @@
           seriesHeader.onclick = () => toggleSeries(seriesKey);
 
           seriesHeader.innerHTML = `
-                    <div>
-                        <div class="series-title">${series.seriesDescription}</div>
-                        <div class="series-info">${series.modality} • ${series.patientName}</div>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <div class="series-count">${series.images.length}</div>
-                        <i class="fas fa-chevron-down expand-icon"></i>
-                    </div>
-                `;
+            <div>
+                <div class="series-title">${series.seriesDescription}</div>
+                <div class="series-info">${series.modality} • ${series.patientName}</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div class="series-count">${series.images.length}</div>
+                <i class="fas fa-chevron-down expand-icon"></i>
+            </div>
+        `;
 
           const thumbnailsGrid = document.createElement("div");
           thumbnailsGrid.className = "thumbnails-grid";
@@ -1101,10 +1566,9 @@
 
             thumbnailsGrid.appendChild(thumbnail);
 
-            // Load thumbnail asynchronously with delay to prevent overwhelming
             setTimeout(() => {
               loadThumbnailImage(image.imageId, thumbnail, loadingDiv, index);
-            }, index * 100 + Math.random() * 50); // Stagger loading with some randomness
+            }, index * 100);
           });
 
           seriesItem.appendChild(seriesHeader);
@@ -1113,227 +1577,143 @@
         });
       }
 
-      function toggleSeries(seriesKey) {
-        const seriesItem = document.getElementById(`series_${seriesKey}`);
-        seriesItem.classList.toggle("series-collapsed");
-      }
-
-      function selectSeries(seriesKey, imageIndex = 0) {
-        if (!allSeries[seriesKey]) return;
-
-        //  console.log('Selecting series:', seriesKey, 'image:', imageIndex);
-
-        // Update active series
-        document
-          .querySelectorAll(".series-item")
-          .forEach((item) => item.classList.remove("active"));
-        const seriesElement = document.getElementById(`series_${seriesKey}`);
-        if (seriesElement) {
-          seriesElement.classList.add("active");
-          // Expand the series if collapsed
-          seriesElement.classList.remove("series-collapsed");
-        }
-
-        // Update active thumbnail
-        document
-          .querySelectorAll(".thumbnail")
-          .forEach((thumb) => thumb.classList.remove("active"));
-        const thumbnailsGrid = document.getElementById(
-          `thumbnails_${seriesKey}`
-        );
-        if (thumbnailsGrid) {
-          const thumbnails = thumbnailsGrid.querySelectorAll(".thumbnail");
-          if (thumbnails[imageIndex]) {
-            thumbnails[imageIndex].classList.add("active");
-          }
-        }
-
-        currentSeriesId = seriesKey;
-        currentImageIndex = imageIndex;
-
-        const series = allSeries[seriesKey];
-        const image = series.images[imageIndex];
-
-        // console.log('Loading image:', image.imageId);
-
-        // Enable cornerstone if not already enabled
-        try {
-          if (!loaded) {
-            cornerstone.enable(dicomImage);
-            loaded = true;
-            // console.log('Cornerstone enabled on main viewport');
-          }
-
-          // Show loading state
-          updateStatus("Loading image...");
-
-          // Load and display image
-          cornerstone
-            .loadImage(image.imageId)
-            .then(function (cornerstoneImage) {
-              //   console.log('Image loaded successfully:', cornerstoneImage);
-
-              try {
-                const viewport = cornerstone.getDefaultViewportForImage(
-                  dicomImage,
-                  cornerstoneImage
-                );
-
-                // Apply appropriate windowing
-                if (
-                  cornerstoneImage.windowWidth &&
-                  cornerstoneImage.windowCenter
-                ) {
-                  viewport.voi = {
-                    windowWidth: cornerstoneImage.windowWidth,
-                    windowCenter: cornerstoneImage.windowCenter,
-                  };
-                } else {
-                  // Auto calculate window/level
-                  const range =
-                    cornerstoneImage.maxPixelValue -
-                    cornerstoneImage.minPixelValue;
-                  viewport.voi = {
-                    windowWidth: range,
-                    windowCenter: cornerstoneImage.minPixelValue + range / 2,
-                  };
-                }
-
-                cornerstone.displayImage(
-                  dicomImage,
-                  cornerstoneImage,
-                  viewport
-                );
-
-                showViewer();
-                updateImageInfo();
-                setupTools();
-                updateStatus("Image loaded successfully");
-              } catch (displayError) {
-                console.error("Error displaying image:", displayError);
-                showError("Error displaying image: " + displayError.message);
-              }
-            })
-            .catch(function (error) {
-              console.error("Error loading DICOM image:", error);
-              showError("Error loading DICOM image: " + error.message);
-              updateStatus("Error loading image");
-            });
-        } catch (enableError) {
-          console.error("Error enabling cornerstone:", enableError);
-          showError("Error initializing viewer: " + enableError.message);
-        }
-      }
-
-      function loadThumbnailImage(
-        imageId,
-        thumbnailContainer,
-        loadingDiv,
-        index
-      ) {
-        // Use HTML5 Canvas with 2D context instead of cornerstone for better performance
+      function loadThumbnailImage(imageId, thumbnailContainer, loadingDiv, index) {
         const canvas = document.createElement("canvas");
         canvas.className = "thumbnail-image";
         canvas.width = 76;
         canvas.height = 76;
         canvas.style.display = "none";
 
-        //console.log('Loading thumbnail for:', imageId);
+        cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
+        cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
 
-        // Load the DICOM image using cornerstone but render differently
-        cornerstone
-          .loadImage(imageId)
-          .then(function (image) {
-            try {
-              // Create a temporary div element for cornerstone
-              const tempDiv = document.createElement("div");
-              tempDiv.style.width = "76px";
-              tempDiv.style.height = "76px";
-              tempDiv.style.position = "absolute";
-              tempDiv.style.left = "-9999px"; // Hide off-screen
-              document.body.appendChild(tempDiv);
+        cornerstone.loadImage(imageId)
+          .then((image) => {
+            const tempDiv = document.createElement("div");
+            tempDiv.style.width = "76px";
+            tempDiv.style.height = "76px";
+            tempDiv.style.position = "absolute";
+            tempDiv.style.left = "-9999px";
+            document.body.appendChild(tempDiv);
 
-              // Enable cornerstone on temp div
-              cornerstone.enable(tempDiv);
+            cornerstone.enable(tempDiv);
 
-              // Calculate viewport for thumbnail
-              const viewport = cornerstone.getDefaultViewportForImage(
-                tempDiv,
-                image
-              );
-              const scaleX = 76 / image.width;
-              const scaleY = 76 / image.height;
-              viewport.scale = Math.min(scaleX, scaleY) * 0.85;
-              viewport.translation = { x: 0, y: 0 };
+            const viewport = cornerstone.getDefaultViewportForImage(tempDiv, image);
+            const scaleX = 76 / image.width;
+            const scaleY = 76 / image.height;
+            viewport.scale = Math.min(scaleX, scaleY) * 0.85;
 
-              // Set windowing
-              if (image.windowWidth && image.windowCenter) {
-                viewport.voi = {
-                  windowWidth: image.windowWidth,
-                  windowCenter: image.windowCenter,
-                };
-              } else {
-                const range = image.maxPixelValue - image.minPixelValue;
-                viewport.voi = {
-                  windowWidth: range * 0.8,
-                  windowCenter: image.minPixelValue + range / 2,
-                };
-              }
-
-              // Display on temp div
-              cornerstone.displayImage(tempDiv, image, viewport);
-
-              // Get the canvas from cornerstone and copy it
-              const cornerstoneCanvas = tempDiv.querySelector("canvas");
-              if (cornerstoneCanvas) {
-                const ctx = canvas.getContext("2d");
-                ctx.drawImage(cornerstoneCanvas, 0, 0, 76, 76);
-              }
-
-              // Cleanup temp div
-              cornerstone.disable(tempDiv);
-              document.body.removeChild(tempDiv);
-
-              // Replace loading indicator with canvas
-              if (loadingDiv && loadingDiv.parentNode) {
-                loadingDiv.remove();
-              }
-              canvas.style.display = "block";
-
-              const infoElement =
-                thumbnailContainer.querySelector(".thumbnail-info");
-              if (infoElement) {
-                thumbnailContainer.insertBefore(canvas, infoElement);
-              } else {
-                thumbnailContainer.appendChild(canvas);
-              }
-            } catch (error) {
-              console.error("Error creating thumbnail:", error);
-              showThumbnailError(loadingDiv, "Render error");
+            if (!viewport.voi) {
+              const range = image.maxPixelValue - image.minPixelValue;
+              viewport.voi = {
+                windowWidth: range * 0.8,
+                windowCenter: image.minPixelValue + range / 2
+              };
             }
+
+            cornerstone.displayImage(tempDiv, image, viewport);
+
+            const cornerstoneCanvas = tempDiv.querySelector("canvas");
+            if (cornerstoneCanvas) {
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(cornerstoneCanvas, 0, 0, 76, 76);
+            }
+
+            cornerstone.disable(tempDiv);
+            document.body.removeChild(tempDiv);
+
+            if (loadingDiv && loadingDiv.parentNode) {
+              loadingDiv.remove();
+            }
+            canvas.style.display = "block";
+
+            const infoElement = thumbnailContainer.querySelector(".thumbnail-info");
+            thumbnailContainer.insertBefore(canvas, infoElement || null);
           })
-          .catch(function (error) {
-            console.error("Error loading thumbnail image:", error);
-            showThumbnailError(loadingDiv, "Load error");
+          .catch((error) => {
+            console.error(`Thumbnail load error for ${imageId}:`, error);
+            if (loadingDiv) {
+              loadingDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+            }
           });
       }
 
-      function showThumbnailError(loadingDiv, errorType = "Error") {
-        if (loadingDiv && loadingDiv.parentNode) {
-          loadingDiv.innerHTML =
-            '<i class="fas fa-exclamation-triangle" title="' +
-            errorType +
-            '"></i>';
-          loadingDiv.style.color = "#dc2626";
-          loadingDiv.style.fontSize = "10px";
-        }
+      function toggleSeries(seriesKey) {
+        const seriesItem = document.getElementById(`series_${seriesKey}`);
+        seriesItem.classList.toggle("series-collapsed");
       }
 
-      function setupTools() {
+//     function selectSeries(seriesInstanceUID, imageIndex = 0) {
+//     const series = allSeries[seriesInstanceUID];
+//     if (!series || !series.images[imageIndex]) return;
+
+//     currentSeriesId = seriesInstanceUID;
+//     currentImageIndex = imageIndex;
+
+//     const element = document.getElementById('dicomImage');
+//     console.log(element);
+    
+//     const imageId = series.images[imageIndex].imageId;
+
+//     // Enable the element if not already enabled
+//     try {
+//         if (!cornerstone.getEnabledElements().some(el => el.element === element)) {
+//             cornerstone.enable(element);
+//         }
+//     } catch (e) {
+//         console.log('Error enabling element:', e);
+//     }
+
+//     // Load and display the image
+
+// loadImageIntoViewport(element, imageId);
+
+//     // Setup stack scrolling & tools
+//     setupToolsForViewport(element);
+
+//     // Update image info and UI
+//     updateImageInfo();
+//     updateCineControls();
+//     showViewer();
+// }
+
+function selectSeries(seriesInstanceUID, imageIndex = 0) {
+  const series = allSeries[seriesInstanceUID];
+  if (!series || !series.images[imageIndex]) return;
+
+  currentSeriesId = seriesInstanceUID;
+  currentImageIndex = imageIndex;
+
+  const el = getActiveElement();
+  if (!el) {
+    console.error("No active viewport found.");
+    return;
+  }
+  ensureEnabled(el);
+
+  const imageId = series.images[imageIndex].imageId;
+  displayImageInto(el, imageId)
+    .then(() => {
+      setupToolsForViewport(el);
+      updateImageInfo();
+      updateCineControls();
+      showViewer();
+    })
+    .catch(err => console.error("Error displaying image:", err));
+}
+
+
+function loadImageIntoViewport(element, imageId) {
+  displayImageInto(element, imageId).catch(err => {
+    console.error("Error in loadImageIntoViewport:", err);
+  });
+}
+
+
+      function setupToolsForViewport(element) {
         const series = allSeries[currentSeriesId];
         if (!series || series.images.length <= 1) return;
 
-        const element = dicomImage;
         const StackScrollMouseWheelTool =
           cornerstoneTools.StackScrollMouseWheelTool;
 
@@ -1347,16 +1727,13 @@
         cornerstoneTools.addTool(StackScrollMouseWheelTool);
         cornerstoneTools.setToolActive("StackScrollMouseWheel", {});
 
-        // element.addEventListener('wheel', function(e) {
-        //     e.preventDefault();
-        //     const delta = e.deltaY > 0 ? 1 : -1;
-        //     changeImage(delta);
-        // });
-
         let scrollAccumulator = 0;
         const SCROLL_THRESHOLD = 100;
 
-        element.addEventListener("wheel", function (event) {
+        // Remove existing wheel listeners
+        element.removeEventListener("wheel", element._wheelHandler);
+        
+        element._wheelHandler = function (event) {
           event.preventDefault();
 
           scrollAccumulator += event.deltaY;
@@ -1364,12 +1741,13 @@
           if (scrollAccumulator >= SCROLL_THRESHOLD) {
             changeImage(1);
             scrollAccumulator = 0;
-            scrollAccumulator = 0;
           } else if (scrollAccumulator <= -SCROLL_THRESHOLD) {
+            changeImage(-1);
             scrollAccumulator = 0;
           }
-        });
+        };
 
+        element.addEventListener("wheel", element._wheelHandler);
         activateTool("wwwc");
       }
 
@@ -1377,10 +1755,14 @@
         const series = allSeries[currentSeriesId];
         if (!series) return;
 
-        const newIndex = Math.max(
-          0,
-          Math.min(series.images.length - 1, currentImageIndex + direction)
-        );
+        let newIndex = currentImageIndex + direction;
+        
+        if (newIndex >= series.images.length) {
+          newIndex = isLooping ? 0 : series.images.length - 1;
+        } else if (newIndex < 0) {
+          newIndex = isLooping ? series.images.length - 1 : 0;
+        }
+        
         if (newIndex !== currentImageIndex) {
           selectSeries(currentSeriesId, newIndex);
         }
@@ -1409,15 +1791,24 @@
           series.seriesDescription
         }<br>Image: ${currentImageIndex + 1}/${series.images.length}`;
 
-        if (loaded) {
-          const viewport = cornerstone.getViewport(dicomImage);
-          document.getElementById(
-            "bottomRight"
-          ).innerHTML = `WW/WC: ${Math.round(
-            viewport.voi.windowWidth
-          )}/${Math.round(
-            viewport.voi.windowCenter
-          )}<br>Zoom: ${viewport.scale.toFixed(1)}x`;
+        // Get viewport info from the active element
+     const activeElement = getActiveElement();
+if (!activeElement || !cornerstone.getEnabledElements().some(e => e.element === activeElement)) return;
+
+
+        try {
+          if (cornerstone.getEnabledElement(activeElement)) {
+            const viewport = cornerstone.getViewport(activeElement);
+            document.getElementById(
+              "bottomRight"
+            ).innerHTML = `WW/WC: ${Math.round(
+              viewport.voi.windowWidth
+            )}/${Math.round(
+              viewport.voi.windowCenter
+            )}<br>Zoom: ${viewport.scale.toFixed(1)}x`;
+          }
+        } catch (error) {
+          console.warn("Could not get viewport info:", error);
         }
       }
 
@@ -1455,13 +1846,15 @@
 
       // Tool activation
       function activateTool(toolName) {
-        if (!loaded) return;
+     const activeElement = getActiveElement();
+if (!activeElement || !cornerstone.getEnabledElements().some(e => e.element === activeElement)) return;
+
+
+        if (!cornerstone.getEnabledElement(activeElement)) return;
 
         document
           .querySelectorAll(".tool-btn")
           .forEach((btn) => btn.classList.remove("active"));
-
-        const element = dicomImage;
 
         cornerstoneTools.setToolPassive("Wwwc");
         cornerstoneTools.setToolPassive("Zoom");
@@ -1571,10 +1964,13 @@
 
       // Window/Level presets
       function applyPreset(presetName) {
-        if (!loaded) return;
+     const activeElement = getActiveElement();
+if (!activeElement || !cornerstone.getEnabledElements().some(e => e.element === activeElement)) return;
 
-        const element = dicomImage;
-        const viewport = cornerstone.getViewport(element);
+
+        if (!cornerstone.getEnabledElement(activeElement)) return;
+
+        const viewport = cornerstone.getViewport(activeElement);
 
         switch (presetName) {
           case "soft":
@@ -1595,105 +1991,157 @@
             break;
         }
 
-        cornerstone.setViewport(element, viewport);
+        cornerstone.setViewport(activeElement, viewport);
         updateImageInfo();
       }
 
       function invertImage() {
-        if (!loaded) return;
+     const activeElement = getActiveElement();
+if (!activeElement || !cornerstone.getEnabledElements().some(e => e.element === activeElement)) return;
 
-        const element = dicomImage;
-        const viewport = cornerstone.getViewport(element);
+
+        if (!cornerstone.getEnabledElement(activeElement)) return;
+
+        const viewport = cornerstone.getViewport(activeElement);
         viewport.invert = !viewport.invert;
-        cornerstone.setViewport(element, viewport);
+        cornerstone.setViewport(activeElement, viewport);
       }
 
       function resetViewport() {
-        if (!loaded) return;
+     const activeElement = getActiveElement();
+if (!activeElement || !cornerstone.getEnabledElements().some(e => e.element === activeElement)) return;
 
-        const element = dicomImage;
-        cornerstone.reset(element);
+
+        if (!cornerstone.getEnabledElement(activeElement)) return;
+
+        cornerstone.reset(activeElement);
         updateImageInfo();
       }
 
-      // function changeLayout(layout) {
-      //    // console.log('Layout changed to:', layout);
-      //     closeAllDropdowns();
-      // }
 
-      function changeLayout(layout) {
-        closeAllDropdowns();
 
-        // Clear existing layout
-        const viewportContainer = document.getElementById("viewportContainer"); // You need to wrap your current #dicomImage in a container
-        viewportContainer.innerHTML = "";
+// Get whichever element is active right now
+function getActiveElement() {
+  if (currentLayout === "1x1") return dicomImage;
+  return gridViewports[activeGridViewport] || null;
+}
 
-        // Determine rows/cols
-        let rows = 1,
-          cols = 1;
-        switch (layout) {
-          case "1x1":
-            rows = 1;
-            cols = 1;
-            break;
-          case "1x2":
-            rows = 1;
-            cols = 2;
-            break;
-          case "2x1":
-            rows = 2;
-            cols = 1;
-            break;
-          case "2x2":
-            rows = 2;
-            cols = 2;
-            break;
-        }
+// Make sure an element is enabled for Cornerstone
+function ensureEnabled(el) {
+  if (!el) return false;
+  const isEnabled = cornerstone.getEnabledElements().some(e => e.element === el);
+  if (!isEnabled) cornerstone.enable(el);
+  return true;
+}
 
-        // Create grid style
-        viewportContainer.style.display = "grid";
-        viewportContainer.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-        viewportContainer.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-        viewportContainer.style.gap = "2px";
+// Safe display into an element
+async function displayImageInto(el, imageId) {
+  if (!el) { console.error("Viewport element not found."); return; }
+  ensureEnabled(el);
+  const image = await cornerstone.loadImage(imageId);
+  cornerstone.displayImage(el, image);
+}
 
-        // Add viewports
-        let index = 0;
-        const series = allSeries[currentSeriesId];
-        if (!series) return;
+function changeLayout(layout) {
+  currentLayout = layout;
 
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            const vp = document.createElement("div");
-            vp.className = "dicom-viewport";
-            vp.style.width = "100%";
-            vp.style.height = "100%";
-            viewportContainer.appendChild(vp);
+  const container = document.getElementById("viewportContainer");
+  const [rows, cols] = layout.split("x").map(Number);
 
-            cornerstone.enable(vp);
+  // Reset grid state
+  gridViewports = [];
+  activeGridViewport = 0;
 
-            if (series.images[index]) {
-              cornerstone
-                .loadImage(series.images[index].imageId)
-                .then((img) => {
-                  cornerstone.displayImage(vp, img);
-                });
-              index++;
-            }
-          }
-        }
-      }
+  // 1x1 uses the single #dicomImage; others use the container grid
+  if (rows === 1 && cols === 1) {
+    // Hide grid, show single viewport
+    if (container) {
+      container.innerHTML = "";
+      container.style.display = "none";
+    }
+    dicomImage.style.display = "block";
 
+    ensureEnabled(dicomImage);
+    activeViewport = dicomImage;
+
+    // Repaint current image if we have one
+    const series = allSeries[currentSeriesId];
+    if (series && series.images[currentImageIndex]) {
+      displayImageInto(dicomImage, series.images[currentImageIndex].imageId);
+      setupToolsForViewport(dicomImage);
+    }
+    return;
+  }
+
+  // Grid layout
+  dicomImage.style.display = "none";
+  if (!container) {
+    console.error("#viewportContainer not found in DOM.");
+    return;
+  }
+  container.style.display = "grid";
+  container.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  container.innerHTML = "";
+
+  // Build grid viewports
+  for (let i = 0; i < rows * cols; i++) {
+    const vp = document.createElement("div");
+    vp.className = "dicom-viewport";
+    vp.style.width = "100%";
+    vp.style.height = "100%";
+    vp.style.border = "1px solid #333";
+
+    container.appendChild(vp);
+    ensureEnabled(vp);
+    gridViewports.push(vp);
+
+    vp.addEventListener("click", () => {
+      activeGridViewport = i;
+      activeViewport = vp;
+      // Optional: give visual focus styling here
+    });
+  }
+
+  // Set first grid cell active
+  activeGridViewport = 0;
+  activeViewport = gridViewports[0];
+
+  // Repaint current image into first cell (if any)
+  const series = allSeries[currentSeriesId];
+  if (series && series.images[currentImageIndex]) {
+    const imageId = series.images[currentImageIndex].imageId;
+    displayImageInto(activeViewport, imageId);
+    setupToolsForViewport(activeViewport);
+  }
+}
+
+
+
+
+
+
+function handleSeriesSelect(seriesId) {
+  let seriesData = allSeries[seriesId]; // allSeries me images ka array hoga
+  loadSeriesImages(seriesData.images);
+  displayFirstImage(seriesData.images[0].imageId);
+}
+
+
+function loadSeriesImages(images) {
+  currentSeriesImages = images; // Array of cornerstone image objects
+}
       function showLoading(show) {
         loadingOverlay.style.display = show ? "flex" : "none";
       }
 
       function updateProgress(percent) {
-        const progressFill = document.getElementById("progressFill");
+        const progressFillUpload = document.getElementById("progressFill");
         const uploadProgress = document.getElementById("uploadProgress");
 
         if (percent > 0) {
           uploadProgress.style.display = "block";
-          progressFill.style.width = percent + "%";
+          progressFillUpload.style.width = percent + "%";
         } else {
           uploadProgress.style.display = "none";
         }
@@ -1719,7 +2167,7 @@
 
       // Keyboard shortcuts
       document.addEventListener("keydown", function (e) {
-        if (!loaded) return;
+        if (!currentSeriesId) return;
 
         switch (e.keyCode) {
           case 37: // Left arrow
@@ -1732,11 +2180,15 @@
             break;
           case 38: // Up arrow
             e.preventDefault();
-            changeImage(1);
+            changeImage(-1);
             break;
           case 40: // Down arrow
             e.preventDefault();
-            changeImage(-1);
+            changeImage(1);
+            break;
+          case 32: // Spacebar - Play/Pause
+            e.preventDefault();
+            togglePlayback();
             break;
           case 82: // R key - Reset
             if (e.ctrlKey) {
@@ -1749,6 +2201,19 @@
               e.preventDefault();
               invertImage();
             }
+            break;
+          case 72: // H key - Home (first image)
+            e.preventDefault();
+            goToImage(0);
+            break;
+          case 69: // E key - End (last image)
+            e.preventDefault();
+            const series = allSeries[currentSeriesId];
+            if (series) goToImage(series.images.length - 1);
+            break;
+          case 76: // L key - Toggle loop
+            e.preventDefault();
+            toggleLoop();
             break;
         }
       });
@@ -1763,6 +2228,7 @@
 
         element.addEventListener("cornerstonenewimage", function (e) {
           updateImageInfo();
+          updateCineControls();
         });
       }
 
@@ -1843,6 +2309,9 @@
       demoButton.onclick = loadSampleData;
       demoButton.style.marginTop = "10px";
       uploadArea.appendChild(demoButton);
+
+      // Initialize cine controls
+      updateCineControls();
     </script>
   </body>
 </html>
