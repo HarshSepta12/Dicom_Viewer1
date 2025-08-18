@@ -9,12 +9,10 @@ cornerstoneTools.init({
   showSVGCursors: true,
 });
 
-// Global variables for series state
 let allSeries = {};
 let currentSeriesId = null;
 let currentImageIndex = 0;
 let loaded = false;
-
 
 // Cine playback variables
 let isPlaying = false;
@@ -170,7 +168,6 @@ function setPlaybackSpeed(speed) {
   }
 }
 
-
 function toggleLoop() {
   isLooping = !isLooping;
   loopBtn.style.opacity = isLooping ? "1" : "0.5";
@@ -201,8 +198,6 @@ function updateCineControls() {
     series.images.length > 1
       ? (currentImageIndex / (series.images.length - 1)) * 100
       : 0;
-      
-      
   progressFill.style.width = progress + "%";
   progressThumb.style.left = progress + "%";
 
@@ -238,6 +233,8 @@ function handleProgressClick(e) {
   }
 }
 
+
+// Drag drop functionality Start-------------------------
 function startDrag(e) {
   e.preventDefault();
   isDragging = true;
@@ -263,6 +260,8 @@ function endDrag() {
   progressThumb.style.cursor = "grab";
 }
 
+// Drag drop functionality End-------------------------
+
 // Auto-hide cine controls
 let controlsTimeout;
 const viewerArea = document.querySelector(".viewer-area");
@@ -282,7 +281,7 @@ function hideCineControls() {
   if (!isPlaying) {
     cineControls.classList.add("auto-hide");
   }
-}   
+}
 
 viewerArea.addEventListener("mousemove", showCineControls);
 viewerArea.addEventListener("mouseleave", hideCineControls);
@@ -326,7 +325,7 @@ folderInput.addEventListener("change", (e) => {
   }
 });
 
-// Dropdown functionality
+// Dropdown functionality 
 document.getElementById("annotationTool").addEventListener("click", (e) => {
   e.stopPropagation();
   toggleDropdown("annotationDropdown");
@@ -396,8 +395,8 @@ function processDicomFiles(files) {
       try {
         const arrayBuffer = e.target.result;
         const byteArray = new Uint8Array(arrayBuffer);
-
         let dataSet;
+
         try {
           dataSet = dicomParser.parseDicom(byteArray);
         } catch (parseError) {
@@ -405,15 +404,21 @@ function processDicomFiles(files) {
           processedFiles++;
           updateProgress((processedFiles / files.length) * 100);
           loadingText.textContent = `Processing DICOM files... (${processedFiles}/${files.length})`;
-
           if (processedFiles === files.length) {
             finalizeSeries(tempSeries, validFiles);
           }
           return;
         }
 
-        const imageId =
-          cornerstoneWADOImageLoader.wadouri.fileManager.add(file);
+        
+        const imageId = cornerstoneWADOImageLoader.wadouri.fileManager.add(file);
+
+      
+        cornerstone.loadAndCacheImage(imageId).then(function(image) {
+          const element = document.getElementById("dicomImage"); // apna viewer div ka id
+          cornerstone.displayImage(element, image);
+          currentImageId = imageId;  // 🟢 Global variable set
+        });
 
         const seriesInstanceUID =
           getMetadataValue(dataSet, "x0020000e") ||
@@ -476,16 +481,390 @@ function processDicomFiles(files) {
         console.error("Error processing file:", file.name, error);
         processedFiles++;
         updateProgress((processedFiles / files.length) * 100);
-        loadingText.textContent = `Processing DICOM files... (${processedFiles}/${files.length}) - Error: ${file.name}`;
+        loadingText.textContent =
+          `Processing DICOM files... (${processedFiles}/${files.length}) - Error: ${file.name}`;
 
         if (processedFiles === files.length) {
           finalizeSeries(tempSeries, validFiles);
         }
       }
     };
+
     reader.readAsArrayBuffer(file);
   });
 }
+
+
+async function showDicomTags() {
+  try {
+    // Check if jQuery is loaded
+    if (typeof $ === 'undefined') {
+      alert('jQuery not loaded properly. Please refresh the page.');
+      return;
+    }
+
+    // Check if any image is loaded
+    const enabledElements = cornerstone.getEnabledElements();
+    if (!enabledElements || enabledElements.length === 0) {
+      alert("No enabled elements found!");
+      return;
+    }
+
+    const enabledElement = enabledElements[0];
+    if (!enabledElement || !enabledElement.image) {
+      alert("No image loaded!");
+      return;
+    }
+
+    const image = enabledElement.image;
+    const imageId = image.imageId;
+    
+    console.log("Image ID:", imageId);
+    console.log("Image object:", image);
+
+    let dataSet = null;
+
+    // Method 1: Try to get from cache
+    try {
+      if (cornerstoneWADOImageLoader && cornerstoneWADOImageLoader.wadouri && 
+          cornerstoneWADOImageLoader.wadouri.dataSetCacheManager) {
+        dataSet = cornerstoneWADOImageLoader.wadouri.dataSetCacheManager.get(imageId);
+        console.log("Dataset from cache:", dataSet);
+      }
+    } catch (e) {
+      console.log("Cache access failed:", e);
+    }
+
+    // Method 2: Try to get from image.data
+    if (!dataSet && image.data && image.data.byteArray) {
+      try {
+        //console.log("Parsing from image.data.byteArray...");
+        const arrayBuffer = image.data.byteArray.buffer || image.data.byteArray;
+        dataSet = dicomParser.parseDicom(new Uint8Array(arrayBuffer));
+        console.log("Dataset from parsing:", dataSet);
+      } catch (e) {
+        console.log("Parsing from byteArray failed:", e);
+      }
+    }
+
+    // Method 3: Try to get from image directly
+    if (!dataSet && image.data) {
+      try {
+        console.log("Trying to access dataset directly from image.data...");
+        // Sometimes the dataset is stored directly in image.data
+        if (image.data.elements) {
+          dataSet = image.data;
+        } else if (image.data.dataset) {
+          dataSet = image.data.dataset;
+        }
+        console.log("Dataset from direct access:", dataSet);
+      } catch (e) {
+        console.log("Direct access failed:", e);
+      }
+    }
+
+    // Method 4: Try to re-load and parse the image
+    if (!dataSet) {
+      try {
+        console.log("Re-loading image to get dataset...");
+        const reloadedImage = await cornerstone.loadAndCacheImage(imageId);
+        if (reloadedImage.data && reloadedImage.data.byteArray) {
+          const arrayBuffer = reloadedImage.data.byteArray.buffer || reloadedImage.data.byteArray;
+          dataSet = dicomParser.parseDicom(new Uint8Array(arrayBuffer));
+        }
+        console.log("Dataset from reload:", dataSet);
+      } catch (e) {
+        console.log("Reload and parse failed:", e);
+      }
+    }
+
+    if (!dataSet || !dataSet.elements) {
+      console.error("No dataset available");
+      
+      // Show a basic info modal instead
+      let html = "<div class='alert alert-warning'>";
+      html += "<h6>DICOM Dataset Not Available</h6>";
+      html += "<p>Unable to parse DICOM tags from this image.</p>";
+      html += "<p><strong>Image Info:</strong></p>";
+      html += `<p>Image ID: ${imageId}</p>`;
+      html += `<p>Width: ${image.width || 'Unknown'}</p>`;
+      html += `<p>Height: ${image.height || 'Unknown'}</p>`;
+      html += `<p>Pixel Spacing: ${image.pixelSpacing ? image.pixelSpacing.join(', ') : 'Unknown'}</p>`;
+      html += "</div>";
+      
+      document.getElementById("dicomTagContent").innerHTML = html;
+      
+      // Use vanilla JavaScript as fallback
+      try {
+        $("#dicomTagModal").modal("show");
+      } catch (modalError) {
+        console.log("Bootstrap modal error, using fallback:", modalError);
+        const modal = document.getElementById("dicomTagModal");
+        if (modal) {
+          modal.style.display = "block";
+          modal.classList.add("show");
+        }
+      }
+      return;
+    }
+
+    console.log("Dataset elements:", Object.keys(dataSet.elements));
+
+    // Create the tags table
+    let html = "<div class='table-responsive'>";
+    html += "<table class='table table-bordered table-sm table-striped'>";
+    html += "<thead class='thead-dark'>";
+    html += "<tr><th style='width: 15%'>Tag</th><th style='width: 35%'>Name</th><th style='width: 50%'>Value</th></tr>";
+    html += "</thead><tbody>";
+
+    // Common DICOM tags to prioritize
+    const commonTags = [
+      'x00100010', // Patient Name
+      'x00100020', // Patient ID
+      'x00100030', // Patient Birth Date
+      'x00100040', // Patient Sex
+      'x00080020', // Study Date
+      'x00080030', // Study Time
+      'x00080060', // Modality
+      'x00200013', // Instance Number
+      'x00080008', // Image Type
+      'x00280010', // Rows
+      'x00280011', // Columns
+      'x00280100', // Bits Allocated
+      'x00280101', // Bits Stored
+      'x00280102', // High Bit
+      'x00281050', // Window Center
+      'x00281051', // Window Width
+    ];
+
+    // Function to safely get tag value
+// --- Replace your getTagValue(...) with this robust version ---
+function getTagValue(dataSet, tag) {
+  try {
+    const el = dataSet.elements[tag];
+    if (!el) return "[Not Present]";
+
+    // Prefer high-level dicomParser dataset helpers
+    const vr = el.vr || ""; // may be empty in Implicit VR
+
+    // Helper to read as string safely (handles multi-values with '\')
+    const readAsString = () => {
+      let s = dataSet.string(tag);
+      if (s == null || s === "") return "[Empty]";
+      // PN/LO/SH/CS etc often use '^' separators -> make it pretty
+      s = s.replace(/\^/g, " ").trim();
+      // Avoid huge blobs
+      if (s.length > 200) s = s.slice(0, 200) + "…";
+      return s;
+    };
+
+    switch (vr) {
+      // Common text VRs
+      case "PN": // Person Name
+      case "LO":
+      case "SH":
+      case "ST":
+      case "LT":
+      case "UT":
+      case "CS":
+      case "DA":
+      case "TM":
+      case "UI":
+      case "AS":
+        return readAsString();
+
+      // Numeric strings
+      case "IS":
+        return dataSet.intString(tag);
+      case "DS":
+        return dataSet.floatString(tag);
+
+      // Unsigned/signed integers
+      case "US":
+        return dataSet.uint16(tag);
+      case "SS":
+        return dataSet.int16(tag);
+      case "UL":
+        return dataSet.uint32(tag);
+      case "SL":
+        return dataSet.int32(tag);
+
+      // Floating point
+      case "FL":
+        return dataSet.float(tag);
+      case "FD":
+        return dataSet.double(tag);
+
+      // Sequences
+      case "SQ":
+        return "[Sequence]";
+
+      default:
+        // When VR is unknown (Implicit VR), try string first, then fallbacks
+        const asStr = readAsString();
+        if (asStr !== "[Empty]") return asStr;
+
+        // Try number fallbacks by length
+        const len = el.length;
+        if (len === 2) return dataSet.uint16(tag);
+        if (len === 4) return dataSet.uint32(tag);
+        if (len === 8) {
+          const f = dataSet.double(tag);
+          if (typeof f === "number" && !Number.isNaN(f)) return f;
+        }
+        return "[Binary/Complex Data]";
+    }
+  } catch {
+    return "[Error Reading]";
+  }
+}
+
+
+function getTagDescription(tag) {
+  const tagDescriptions = {
+    'x00100010': 'Patient Name',
+    'x00100020': 'Patient ID',
+    'x00100030': 'Patient Birth Date',
+    'x00100040': 'Patient Sex',
+    'x00080020': 'Study Date',
+    'x00080030': 'Study Time',
+    'x00080060': 'Modality',
+    'x00200013': 'Instance Number',
+    'x00080008': 'Image Type',
+    'x00280010': 'Rows',
+    'x00280011': 'Columns',
+    'x00280100': 'Bits Allocated',
+    'x00280101': 'Bits Stored',
+    'x00280102': 'High Bit',
+    'x00281050': 'Window Center',
+    'x00281051': 'Window Width',
+  };
+
+  // Agar custom dictionary me mile
+  if (tagDescriptions[tag]) return tagDescriptions[tag];
+
+  // Tag ko (gggg,eeee) format me convert karo
+  const formattedTag = `(${tag.substring(1,5)},${tag.substring(5)})`;
+
+  // dicomParser dictionary check karo
+  if (dicomParser && dicomParser.dictionary) {
+    const entry = dicomParser.dictionary[formattedTag];
+    if (entry) {
+      if (entry.name) return entry.name; // <-- FIX Yaha
+      if (typeof entry === "string") return entry;
+    }
+  }
+
+  return formattedTag; // agar name na mile to at least tag format dikhao
+}
+
+
+
+    // First add common tags
+    let addedTags = new Set();
+    commonTags.forEach(tag => {
+      if (dataSet.elements[tag]) {
+        const name = getTagDescription(tag);
+        const value = getTagValue(dataSet, tag);
+        html += `<tr><td><code>${tag}</code></td><td><strong>${name}</strong></td><td>${value}</td></tr>`;
+        addedTags.add(tag);
+      }
+    });
+
+    // Add separator if we have common tags
+    if (addedTags.size > 0) {
+      html += "<tr><td colspan='3' class='table-secondary text-center'><strong>Other Tags</strong></td></tr>";
+    }
+
+    // Then add remaining tags
+    const remainingTags = Object.keys(dataSet.elements).filter(tag => !addedTags.has(tag));
+    remainingTags.slice(0, 50).forEach(tag => { // Limit to 50 additional tags
+      const name = getTagDescription(tag);
+      const value = getTagValue(dataSet, tag);
+      html += `<tr><td><code>${tag}</code></td><td>${name}</td><td>${value}</td></tr>`;
+    });
+
+    if (remainingTags.length > 50) {
+      // html += `<tr><td colspan='3' class='text-muted text-center'><em>... and ${remainingTags.length - 50} more tags</em></td></tr>`;
+    }
+
+    html += "</tbody></table></div>";
+
+    // Add summary info at the top
+    const summaryInfo = `
+      <div class='alert alert-info mb-3'>
+        <h6><i class='fas fa-info-circle'></i> DICOM Information</h6>
+        <div class='row'>
+          <div class='col-md-6'>
+            <strong>Total Tags:</strong> ${Object.keys(dataSet.elements).length}<br>
+            <strong>Image Size:</strong> ${image.width}×${image.height}
+          </div>
+          <div class='col-md-6'>
+            <strong>Patient:</strong> ${getTagValue(dataSet, 'x00100010')}<br>
+            <strong>Modality:</strong> ${getTagValue(dataSet, 'x00080060')}
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById("dicomTagContent").innerHTML = summaryInfo + html;
+    
+    // Show modal with fallback
+    try {
+      $("#dicomTagModal").modal("show");
+    } catch (modalError) {
+      console.log("Bootstrap modal error, using fallback:", modalError);
+      const modal = document.getElementById("dicomTagModal");
+      if (modal) {
+        modal.style.display = "block";
+        modal.classList.add("show");
+        // Add backdrop
+        const backdrop = document.createElement("div");
+        backdrop.className = "modal-backdrop fade show";
+        backdrop.id = "modalBackdrop";
+        document.body.appendChild(backdrop);
+        
+        // Close button functionality
+        const closeBtn = modal.querySelector('[data-dismiss="modal"]');
+        if (closeBtn) {
+          closeBtn.onclick = function() {
+            modal.style.display = "none";
+            modal.classList.remove("show");
+            const backdrop = document.getElementById("modalBackdrop");
+            if (backdrop) backdrop.remove();
+          };
+        }
+      }
+    }
+
+  } catch (err) {
+    console.error("DICOM tag error:", err);
+    
+    // Show error in modal instead of alert
+    let errorHtml = `
+      <div class='alert alert-danger'>
+        <h6><i class='fas fa-exclamation-triangle'></i> Error Loading DICOM Tags</h6>
+        <p><strong>Error:</strong> ${err.message}</p>
+        <p><strong>Stack:</strong></p>
+        <pre style='font-size: 12px; max-height: 200px; overflow-y: auto;'>${err.stack}</pre>
+      </div>
+    `;
+    
+    document.getElementById("dicomTagContent").innerHTML = errorHtml;
+    
+    // Show modal with fallback
+    try {
+      $("#dicomTagModal").modal("show");
+    } catch (modalError) {
+      const modal = document.getElementById("dicomTagModal");
+      if (modal) {
+        modal.style.display = "block";
+        modal.classList.add("show");
+      }
+    }
+  }
+}
+
 
 function finalizeSeries(tempSeries, validFiles) {
   if (validFiles === 0) {
@@ -547,6 +926,8 @@ function createSeriesUI() {
     thumbnailsGrid.className = "thumbnails-grid";
     thumbnailsGrid.id = `thumbnails_${seriesKey}`;
 
+    // console.log(series);
+    
     series.images.forEach((image, index) => {
       const thumbnail = document.createElement("div");
       thumbnail.className = "thumbnail";
@@ -561,7 +942,6 @@ function createSeriesUI() {
       info.className = "thumbnail-info";
       info.textContent = `${index + 1}`;
       thumbnail.appendChild(info);
-
       thumbnailsGrid.appendChild(thumbnail);
 
       setTimeout(() => {
@@ -583,6 +963,8 @@ function loadThumbnailImage(imageId, thumbnailContainer, loadingDiv, index) {
   canvas.style.display = "none";
 
   cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
+  // console.log(cornerstoneTools);
+  
   cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
 
   cornerstone
@@ -598,39 +980,35 @@ function loadThumbnailImage(imageId, thumbnailContainer, loadingDiv, index) {
       cornerstone.enable(tempDiv);
 
       const viewport = cornerstone.getDefaultViewportForImage(tempDiv, image);
-      const scaleX = 76 / image.width;
-      const scaleY = 76 / image.height;
-      viewport.scale = Math.min(scaleX, scaleY) * 0.85;
-
-      if (!viewport.voi) {
-        const range = image.maxPixelValue - image.minPixelValue;
-        viewport.voi = {
-          windowWidth: range * 0.8,
-          windowCenter: image.minPixelValue + range / 2,
-        };
-      }
+      viewport.scale = 1.0; // Debug: remove this later
 
       cornerstone.displayImage(tempDiv, image, viewport);
 
-      const cornerstoneCanvas = tempDiv.querySelector("canvas");
-      if (cornerstoneCanvas) {
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(cornerstoneCanvas, 0, 0, 76, 76);
-      }
+      // Wait a bit to ensure canvas is rendered
+      setTimeout(() => {
+        const cornerstoneCanvas = tempDiv.querySelector("canvas");
 
-      cornerstone.disable(tempDiv);
-      document.body.removeChild(tempDiv);
+        if (cornerstoneCanvas) {
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(cornerstoneCanvas, 0, 0, 76, 76);
+        } else {
+          console.warn("No canvas found in tempDiv");
+        }
 
-      if (loadingDiv && loadingDiv.parentNode) {
-        loadingDiv.remove();
-      }
-      canvas.style.display = "block";
+        cornerstone.disable(tempDiv);
+        document.body.removeChild(tempDiv);
 
-      const infoElement = thumbnailContainer.querySelector(".thumbnail-info");
-      thumbnailContainer.insertBefore(canvas, infoElement || null);
+        if (loadingDiv && loadingDiv.parentNode) {
+          loadingDiv.remove();
+        }
+        canvas.style.display = "block";
+
+        const infoElement = thumbnailContainer.querySelector(".thumbnail-info");
+        thumbnailContainer.insertBefore(canvas, infoElement || null);
+      }, 50); // Delay to ensure image is drawn
     })
     .catch((error) => {
-      console.error(`Thumbnail load error for ${imageId}:`, error);
+      // console.error(`Thumbnail load error for ${imageId}:`, error);
       if (loadingDiv) {
         loadingDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
       }
@@ -641,40 +1019,6 @@ function toggleSeries(seriesKey) {
   const seriesItem = document.getElementById(`series_${seriesKey}`);
   seriesItem.classList.toggle("series-collapsed");
 }
-
-//     function selectSeries(seriesInstanceUID, imageIndex = 0) {
-//     const series = allSeries[seriesInstanceUID];
-//     if (!series || !series.images[imageIndex]) return;
-
-//     currentSeriesId = seriesInstanceUID;
-//     currentImageIndex = imageIndex;
-
-//     const element = document.getElementById('dicomImage');
-//     console.log(element);
-
-//     const imageId = series.images[imageIndex].imageId;
-
-//     // Enable the element if not already enabled
-//     try {
-//         if (!cornerstone.getEnabledElements().some(el => el.element === element)) {
-//             cornerstone.enable(element);
-//         }
-//     } catch (e) {
-//         console.log('Error enabling element:', e);
-//     }
-
-//     // Load and display the image
-
-// loadImageIntoViewport(element, imageId);
-
-//     // Setup stack scrolling & tools
-//     setupToolsForViewport(element);
-
-//     // Update image info and UI
-//     updateImageInfo();
-//     updateCineControls();
-//     showViewer();
-// }
 
 function selectSeries(seriesInstanceUID, imageIndex = 0) {
   const series = allSeries[seriesInstanceUID];
@@ -699,6 +1043,108 @@ function selectSeries(seriesInstanceUID, imageIndex = 0) {
       showViewer();
     })
     .catch((err) => console.error("Error displaying image:", err));
+}
+
+
+// Export DICOM Tags to CSV
+function exportDicomTags() {
+  try {
+    const enabledElements = cornerstone.getEnabledElements();
+    if (!enabledElements || enabledElements.length === 0) {
+      alert("No image loaded!");
+      return;
+    }
+
+    const enabledElement = enabledElements[0];
+    const image = enabledElement.image;
+    const imageId = image.imageId;
+    
+    // Get the same dataset we used in showDicomTags
+    let dataSet = null;
+    
+    try {
+      if (cornerstoneWADOImageLoader && cornerstoneWADOImageLoader.wadouri && 
+          cornerstoneWADOImageLoader.wadouri.dataSetCacheManager) {
+        dataSet = cornerstoneWADOImageLoader.wadouri.dataSetCacheManager.get(imageId);
+      }
+    } catch (e) {
+      console.log("Cache access failed:", e);
+    }
+
+    if (!dataSet && image.data && image.data.byteArray) {
+      try {
+        const arrayBuffer = image.data.byteArray.buffer || image.data.byteArray;
+        dataSet = dicomParser.parseDicom(new Uint8Array(arrayBuffer));
+      } catch (e) {
+        console.log("Parsing failed:", e);
+      }
+    }
+
+    if (!dataSet || !dataSet.elements) {
+      alert("No DICOM data available to export!");
+      return;
+    }
+
+    // Create CSV content
+    let csvContent = "Tag,Name,Value\n";
+    
+    Object.keys(dataSet.elements).forEach(tag => {
+      try {
+        const name = getTagDescription ? getTagDescription(tag) : (dicomParser.tagDescriptions && dicomParser.tagDescriptions[tag]) || 'Unknown';
+        let value = "";
+        
+        try {
+          value = dicomParser.readString(dataSet, tag) || "[Empty]";
+        } catch (e) {
+          try {
+            value = dicomParser.readUint16(dataSet, tag) || "[Empty]";
+          } catch (e2) {
+            value = "[Binary/Complex]";
+          }
+        }
+        
+        // Escape commas and quotes in CSV
+        value = String(value).replace(/"/g, '""');
+        if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+          value = `"${value}"`;
+        }
+        
+        csvContent += `${tag},"${name}","${value}"\n`;
+      } catch (e) {
+        console.log("Error processing tag:", tag, e);
+      }
+    });
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `dicom_tags_${Date.now()}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Show success message
+    const alertDiv = document.createElement('div');
+    alertDiv.className = 'alert alert-success alert-dismissible fade show';
+    alertDiv.innerHTML = `
+      <strong>Success!</strong> DICOM tags exported successfully.
+      <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+        <span aria-hidden="true">&times;</span>
+      </button>
+    `;
+    
+    const modalBody = document.getElementById('dicomTagContent');
+    modalBody.insertBefore(alertDiv, modalBody.firstChild);
+    
+  } catch (error) {
+    console.error("Export error:", error);
+    alert("Error exporting DICOM tags: " + error.message);
+  }
 }
 
 function loadImageIntoViewport(element, imageId) {
@@ -813,6 +1259,7 @@ function getMetadataValue(dataSet, tag) {
   try {
     const element = dataSet.elements[tag];
     if (element) {
+      // console.log("Metadata Value:", dataSet.string(tag));
       return dataSet.string(tag);
     }
     return null;
