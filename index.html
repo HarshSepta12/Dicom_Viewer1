@@ -3,26 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Modern DICOM Viewer with Cine</title>
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-    />
+    <title>DICOM Folder Manager - PACS Integration</title>
+    <link rel="stylesheet" href="./css/styles.css" />
     <link rel="stylesheet" href="./css/styles.css" />
     <link
       rel="shortcut icon"
       href="./assets/dicomLogo.png"
       type="image/x-icon"
     />
-      <link
+    <link
       rel="stylesheet"
       href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
     />
-    
-    <!-- jQuery को सबसे पहले load करें -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
-
 
     <script src="./js/hammer.js"></script>
     <script src="./js/dicomParser.min.js"></script>
@@ -32,356 +26,93 @@
     <script src="./js/cornerstone-tools.js"></script>
   </head>
   <body>
-    <div class="app-header">
-      <div class="app-logo">D</div>
-      <div class="app-title">DICOM Viewer with Cine</div>
-    </div>
+    <div class="container" id="folderManagerContainer">
+      <div class="header">
+        <h1>📁 DICOM Folder Manager - PACS Integration</h1>
+        <p>View your DICOM files from PACS server</p>
 
-    <div class="main-container">
-      <div class="sidebar">
-        <div class="sidebar-section">
-          <div class="sidebar-title">Upload DICOM Files</div>
-          <div class="upload-area" id="uploadArea">
-            <div class="upload-icon">
-              <i class="fas fa-cloud-upload-alt"></i>
+        <!-- Server Status -->
+        <!-- <div id="serverStatus" class="server-status server-offline">
+                🔴 PACS Server: Checking connection...
             </div>
-            <div class="upload-text">Drop DICOM files here</div>
-            <div class="upload-subtext">or click to browse</div>
-            <div class="upload-buttons">
-              <button
-                class="upload-btn"
-                onclick="document.getElementById('fileInput').click()"
-              >
-                <i class="fas fa-file"></i> Files
-              </button>
-              <button
-                class="upload-btn secondary"
-                onclick="document.getElementById('folderInput').click()"
-              >
-                <i class="fas fa-folder"></i> Folder
-              </button>
+            
+            <button class="refresh-btn" onclick="refreshFromPACS()">
+                🔄 Refresh from PACS Server
+            </button> -->
+      </div>
+
+      <div class="controls">
+        <div class="control-group">
+          <label>Upload File/Folder (Local Upload)</label>
+          <div class="file-upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <div>Click here to select folder or drag & drop</div>
+            <div style="font-size: 0.9em; color: #666; margin-top: 5px">
+              DICOM folders (.dcm files), ZIP folders supported
             </div>
           </div>
-          <input type="file" id="fileInput" class="file-input" multiple />
+
+          <div style="margin-top: 10px">
+            <button class="btn" onclick="selectFolder()">
+              <input
+                type="file"
+                id="fileInput"
+                webkitdirectory
+                directory
+                multiple
+               style="display: none;"
+              />📁 Select Folder
+            </button>
+            <button class="btn secondary" onclick="selectZipFile()">
+              <input type="file" id="zipInput" accept=".zip" style="display: none;"/>📦 Select ZIP
+            </button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="patientSearch">Patient Name Search</label>
           <input
-            type="file"
-            id="folderInput"
-            class="file-input"
-            webkitdirectory
-            multiple
+            type="text"
+            id="patientSearch"
+            placeholder="Search Patient Name..."
+            oninput="filterFolders()"
           />
-
-          <div class="progress-bar" id="uploadProgress" style="display: none">
-            <div class="progress-fill" id="progressFill"></div>
-          </div>
-
-          <div class="error-message" id="errorMessage"></div>
-          <div class="success-message" id="successMessage"></div>
         </div>
 
-        <div
-          class="sidebar-section"
-          style="flex: 1; display: flex; flex-direction: column; min-height: 0"
-        >
-          <div class="sidebar-title">Series</div>
-          <div class="series-container" id="seriesContainer">
-            <!-- Series will be added here -->
-          </div>
-        </div>
-      </div>
-
-      <div class="viewer-area">
-        <div class="toolbar">
-          <div class="tool-group">
-            <button class="tool-btn" id="annotationTool" title="Annotations">
-              <i class="fas fa-pen"></i>
-            </button>
-            <div class="tool-dropdown" id="annotationDropdown">
-              <div
-                class="dropdown-item"
-                onclick="activateTool('bidirectional')"
-              >
-                <i class="fas fa-arrows-alt"></i> Bidirectional
-              </div>
-              <div class="dropdown-item" onclick="activateTool('arrow')">
-                <i class="fas fa-long-arrow-alt-right"></i> Arrow
-              </div>
-              <div class="dropdown-item" onclick="activateTool('ellipse')">
-                <i class="fas fa-circle"></i> Ellipse ROI
-              </div>
-              <div class="dropdown-item" onclick="activateTool('rectangle')">
-                <i class="fas fa-square"></i> Rectangle ROI
-              </div>
-              <div class="dropdown-item" onclick="activateTool('freehand')">
-                <i class="fas fa-pencil-alt"></i> Freehand
-              </div>
-              <div class="dropdown-item" onclick="activateTool('length')">
-                <i class="fas fa-ruler"></i> Length
-              </div>
-              <div class="dropdown-item" onclick="activateTool('angle')">
-                <i class="fas fa-drafting-compass"></i> Angle
-              </div>
-              <div class="dropdown-item" onclick="activateTool('probe')">
-                <i class="fas fa-crosshairs"></i> Probe
-              </div>
-
-              <div class="dropdown-item">
-                <button
-                  class="tool-btn"
-                  id="dicomTagTool"
-                  title="DICOM Tags"
-                  onclick="showDicomTags()"
-                >
-                  <i class="fas fa-tags"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="tool-group">
-            <button
-              class="tool-btn"
-              id="dicomTagTool"
-              title="DICOM Tags"
-              onclick="showDicomTags()"
-            >
-              <i class="fas fa-tags"></i>
-            </button>
-          </div>
-
-          <div class="tool-group">
-            <button
-              class="tool-btn active"
-              id="wwwcTool"
-              onclick="activateTool('wwwc')"
-              title="Window/Level"
-            >
-              <i class="fas fa-adjust"></i>
-            </button>
-            <button
-              class="tool-btn"
-              onclick="activateTool('zoom')"
-              title="Zoom"
-            >
-              <i class="fas fa-search-plus"></i>
-            </button>
-            <button class="tool-btn" onclick="activateTool('pan')" title="Pan">
-              <i class="fas fa-hand-paper"></i>
-            </button>
-            <button
-              class="tool-btn"
-              onclick="activateTool('magnify')"
-              title="Magnify"
-            >
-              <i class="fas fa-search"></i>
-            </button>
-          </div>
-
-          <div class="tool-group">
-            <button class="tool-btn" onclick="invertImage()" title="Invert">
-              <i class="fas fa-adjust"></i>
-            </button>
-            <button class="tool-btn" onclick="resetViewport()" title="Reset">
-              <i class="fas fa-redo"></i>
-            </button>
-            <button
-              class="tool-btn"
-              onclick="activateTool('eraser')"
-              title="Eraser"
-            >
-              <i class="fas fa-eraser"></i>
-            </button>
-          </div>
-
-          <div class="tool-group">
-            <button class="tool-btn" id="layoutTool" title="Layout">
-              <i class="fas fa-th"></i>
-            </button>
-            <div class="tool-dropdown" id="layoutDropdown">
-              <div class="dropdown-item" onclick="changeLayout('1x1')">
-                <i class="fas fa-square"></i> 1x1
-              </div>
-              <div class="dropdown-item" onclick="changeLayout('1x2')">
-                <i class="fas fa-columns"></i> 1x2
-              </div>
-              <div class="dropdown-item" onclick="changeLayout('2x1')">
-                <i class="fas fa-grip-lines"></i> 2x1
-              </div>
-              <div class="dropdown-item" onclick="changeLayout('2x2')">
-                <i class="fas fa-th"></i> 2x2
-              </div>
-            </div>
-          </div>
-
-          <div class="preset-buttons">
-            <button class="preset-btn" onclick="applyPreset('soft')">
-              Soft Tissue
-            </button>
-            <button class="preset-btn" onclick="applyPreset('bone')">
-              Bone
-            </button>
-            <button class="preset-btn" onclick="applyPreset('lung')">
-              Lung
-            </button>
-            <button class="preset-btn" onclick="applyPreset('brain')">
-              Brain
-            </button>
+        <div class="control-group">
+          <label>Date Range Filter</label>
+          <div class="date-range">
+            <input type="date" id="fromDate" onchange="filterFolders()" />
+            <input type="date" id="toDate" onchange="filterFolders()" />
           </div>
         </div>
 
-        <div class="dicom-viewport" id="viewport">
-
-
- <!-- DICOM Tag Modal -->
-<div class="modal fade" id="dicomTagModal" tabindex="-1" role="dialog" aria-labelledby="dicomTagModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg" role="document">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="dicomTagModalLabel">
-          <i class="fas fa-tags"></i> DICOM Tags Information
-        </h5>
-        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body" id="dicomTagContent">
-        <!-- DICOM tags content will be populated here -->
-        <div class="text-center">
-          <div class="spinner-border text-primary" role="status">
-            <span class="sr-only">Loading...</span>
-          </div>
-          <p class="mt-2">Loading DICOM tags...</p>
+        <div class="control-group">
+          <label>Data Source Filter</label>
+          <select id="sourceFilter" onchange="filterFolders()">
+            <option value="all">All Sources</option>
+            <option value="pacs">PACS Server</option>
+            <option value="local">Local Upload</option>
+          </select>
         </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-dismiss="modal">
-          <i class="fas fa-times"></i> Close
-        </button>
-        <button type="button" class="btn btn-primary" onclick="exportDicomTags()">
-          <i class="fas fa-download"></i> Export Tags
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
 
-
-          <div class="empty-state" id="emptyState">
-            <div class="empty-icon">
-              <i class="fas fa-file-medical"></i>
-            </div>
-            <div>Upload DICOM files to begin viewing</div>
-          </div>
-
-          <div id="viewportContainer" style="width: 100%; height: 100%">
-            <div
-              id="dicomImage"
-              class="dicom-viewport"
-              style="width: 100%; height: 100%"
-            ></div>
-          </div>
-
-          <!-- <div id="dicomImage" class="dicom-viewport"></div>
-<div id="viewportContainer"></div> -->
-
-          <div class="viewport-overlay viewport-info-tl" id="topLeft">
-            Patient: John Doe<br />
-            Study: CT Chest
-          </div>
-
-          <div class="viewport-overlay viewport-info-tr" id="topRight">
-            Date: 2024-01-15<br />
-            Time: 14:30:25
-          </div>
-
-          <div class="viewport-overlay viewport-info-bl" id="bottomLeft">
-            Series: 1/5<br />
-            Image: 1/25
-          </div>
-
-          <div class="viewport-overlay viewport-info-br" id="bottomRight">
-            WW/WC: 400/40<br />
-            Zoom: 1.0x
-          </div>
-
-          <!-- Cine Controls -->
-          <div class="cine-controls" id="cineControls">
-            <div class="cine-controls-container">
-              <!-- Playback Controls -->
-              <div class="cine-buttons">
-                <button class="cine-btn" id="firstBtn" title="First Image">
-                  <i class="fas fa-step-backward"></i>
-                </button>
-                <button class="cine-btn" id="prevBtn" title="Previous">
-                  <i class="fas fa-chevron-left"></i>
-                </button>
-                <button
-                  class="cine-btn play-pause"
-                  id="playPauseBtn"
-                  title="Play/Pause"
-                >
-                  <i class="fas fa-play"></i>
-                </button>
-                <button class="cine-btn" id="nextBtn" title="Next">
-                  <i class="fas fa-chevron-right"></i>
-                </button>
-                <button class="cine-btn" id="lastBtn" title="Last Image">
-                  <i class="fas fa-step-forward"></i>
-                </button>
-              </div>
-
-              <!-- Progress Bar -->
-              <div class="cine-progress-container">
-                <div class="cine-time-display" id="currentTime">1 / 25</div>
-                <div class="cine-progress" id="progressBar">
-                  <div class="cine-progress-fill" id="progressFill"></div>
-                  <div class="cine-progress-thumb" id="progressThumb"></div>
-                </div>
-                <div class="cine-time-display" id="totalTime">25</div>
-              </div>
-
-              <!-- Speed Controls -->
-              <div class="cine-speed-controls">
-                <span class="speed-label">Speed:</span>
-                <button class="speed-btn" data-speed="0.25">0.25x</button>
-                <button class="speed-btn" data-speed="0.5">0.5x</button>
-                <button class="speed-btn active" data-speed="1">1x</button>
-                <button class="speed-btn" data-speed="2">2x</button>
-                <button class="speed-btn" data-speed="4">4x</button>
-                <button
-                  class="cine-btn"
-                  id="loopBtn"
-                  title="Toggle Loop"
-                  style="margin-left: 15px"
-                >
-                  <i class="fas fa-sync-alt"></i>
-                </button>
-              </div>
-            </div>
-          </div>
+      <div class="folder-grid" id="folderGrid">
+        <div class="no-folders">
+          No folder found<br />
+          <small>Loading from PACS server...</small>
         </div>
       </div>
     </div>
 
-    <div class="status-bar">
-      <span id="statusText">Ready</span>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+      <div style="text-align: center">
+        <div class="spinner"></div>
+        <div id="loadingText">Loading from PACS server...</div>
+      </div>
     </div>
 
-    <div class="loading-overlay" id="loadingOverlay" style="display: none">
-      <div class="loading-spinner"></div>
-      <div id="loadingText">Loading DICOM images...</div>
-    </div>
-    <!-- DICOM Tag Modal -->
-    <div
-      class="modal fade"
-      id="dicomTagModal"
-      tabindex="-1"
-      role="dialog"
-      aria-hidden="true"
-    >
-
-    </div>
-
-    <script src="./js/script.js"></script>
+    <script src="./js/Entry.js"></script>
   </body>
 </html>
