@@ -14,17 +14,19 @@ function initIndexedDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open("DICOM_DB", 1);
 
-    request.onupgradeneeded = (event) => {
-      db = event.target.result;
+   request.onupgradeneeded = (event) => {
+  db = event.target.result;
 
-      if (!db.objectStoreNames.contains("dicomFiles")) {
-        db.createObjectStore("dicomFiles", { keyPath: "id", autoIncrement: true });
-      }
+  if (!db.objectStoreNames.contains("dicomFiles")) {
+    const fileStore = db.createObjectStore("dicomFiles", { keyPath: "id", autoIncrement: true });
+    fileStore.createIndex("folderId", "folderId", { unique: false }); // ✅ Add index here
+  }
 
-      if (!db.objectStoreNames.contains("folders")) {
-        db.createObjectStore("folders", { keyPath: "id", autoIncrement: true });
-      }
-    };
+  if (!db.objectStoreNames.contains("folders")) {
+    db.createObjectStore("folders", { keyPath: "id", autoIncrement: true });
+  }
+};
+
 
     request.onsuccess = (event) => {
       db = event.target.result;
@@ -95,7 +97,7 @@ function setupEventListeners() {
 }
 async function loadAndStoreCredentials() {
   try {
-    const response = await fetch("/api/credentials");
+    const response = await fetch("http://localhost:5000/api/credentials");
     if (!response.ok) throw new Error("Failed to fetch credentials");
     
     const creds = await response.json();
@@ -128,12 +130,18 @@ function getAuthHeaders() {
 
 // Check PACS connection
 async function checkPACSConnection() {
+  // debugger
   try {
-    const response = await fetch(`${PACS_SERVER_URL}/system`);
-    if (response.ok) {
+    const headers = getAuthHeaders();
+    const response = await fetch(`${PACS_SERVER_URL}/system`, {
+      method: "GET",
+      mode: "cors",
+      headers: headers,
+    });
       console.log("PACS server connected");
       return true;
-    }
+
+    
   } catch (error) {
     console.error("PACS connection failed:", error);
   }
@@ -157,7 +165,7 @@ async function loadFromPACS() {
     }
 
     const studies = await response.json();
-    console.log("Loaded studies from PACS:", studies);
+    // console.log("Loaded studies from PACS:", studies);
 
     pacsStudies = [];
 
@@ -172,7 +180,7 @@ async function loadFromPACS() {
           headers: headers,
         });
         const studyInfo = await studyResponse.json();
-        console.log(studyInfo.PatientMainDicomTags);
+        // console.log(studyInfo.PatientMainDicomTags);
         
         const instancesResponse = await fetch(`${PACS_SERVER_URL}/studies/${studyId}/instances`, {
           method: "GET",
@@ -291,6 +299,7 @@ async function processFolderUpload(files) {
       folderPath: folderName,
       source: "local",
     };
+    // console.log(folderData);
 
     // Add to local folders array
     const localFolders = getLocalFolders();
@@ -426,6 +435,8 @@ function extractPatientName(folderName) {
 
 // Save file to IndexedDB
 function saveFileToIndexedDB(folderId, file) {
+  // console.log(file);
+  
   return new Promise((resolve, reject) => {
     if (!db) {
       reject(new Error("IndexedDB is not initialized!"));
@@ -443,6 +454,7 @@ function saveFileToIndexedDB(folderId, file) {
       type: file.type || "application/dicom",
       data: file
     };
+
 
     const request = store.add(record);
     request.onsuccess = () => resolve(true);
@@ -583,31 +595,64 @@ async function loadFilesFromIndexedDB(folderId) {
 function filterFolders() {
   const searchTerm = document.getElementById("patientSearch")?.value.toLowerCase() || "";
   const fromDate = document.getElementById("fromDate")?.value || "";
+  // console.log(fromDate);
+  
   const toDate = document.getElementById("toDate")?.value || "";
-  const sourceFilter = document.getElementById("sourceFilter")?.value || "all";
+  // console.log(toDate);
+  
 
+const fromDateObj = parseDate(fromDate);
+const toDateObj = parseDate(toDate);
+
+  const sourceFilter = document.getElementById("sourceFilter")?.value || "all";
+  console.log(sourceFilter);
+  
   let filtered = uploadedFolders.filter((folder) => {
     const matchesSearch = folder.patientName.toLowerCase().includes(searchTerm);
-    const folderDate = folder.date || "";
+      const folderSource = folder.dataSource || folder.source || folder.origin || ""; 
+    const matchesSource =
+      sourceFilter === "all" ? true : folderSource === sourceFilter;
+      const folderDateObj = parseDate(folder.date);
     const matchesDateRange =
-      (!fromDate || folderDate >= fromDate) &&
-      (!toDate || folderDate <= toDate);
-    const matchesSource = sourceFilter === "all" || folder.source === sourceFilter;
+  (!fromDateObj || folderDateObj >= fromDateObj) &&
+  (!toDateObj || folderDateObj <= toDateObj);
 
-    return matchesSearch && matchesDateRange && matchesSource;
+ return matchesSearch && matchesDateRange && matchesSource;
   });
 
   displayFolders(filtered);
 }
 
+
+// Parse date
+function parseDate(dateStr) {
+  if (!dateStr) return null;
+  const formatted = formatDate(dateStr); // your existing function
+  return formatted === "Invalid Date" || formatted === "Unknown"
+    ? null
+    : new Date(formatted);
+}
 // Format date
 function formatDate(dateStr) {
-  if (!dateStr) return "Unknown";
-  if (dateStr.length === 8) {
-    return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+  if (!dateStr || typeof dateStr !== "string") return "Unknown";
+  // console.log(dateStr);
+
+  // If already in YYYY-MM-DD format, return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
   }
-  return dateStr;
+
+  // If in YYYYMMDD format (like from PACS)
+  if (/^\d{8}$/.test(dateStr)) {
+    const year = dateStr.substring(0, 4);
+    const month = dateStr.substring(4, 6);
+    const day = dateStr.substring(6, 8);
+    return `${year}-${month}-${day}`;
+  }
+
+  return "Invalid Date";
 }
+
 
 // Format time
 function formatTime(timeStr) {
@@ -635,7 +680,7 @@ function displayFolders(folders) {
       const isPACS = folder.source === "pacs";
       const folderIcon = isPACS ? "🏥" : "📁";
       const sourceLabel = isPACS ? "PACS Server" : "Local Upload";
-
+      
       return `
         <div class="folder-card" onclick="openDicomViewer('${folder.id}')">
           <div class="folder-icon">${folderIcon}</div>
@@ -650,11 +695,133 @@ function displayFolders(folders) {
             <div style="font-size: 0.8em; color: #007bff;"><strong>Source:</strong> ${sourceLabel}</div>
             ${folder.accessionNumber ? `<div class="study-info"><strong>Acc#:</strong> ${folder.accessionNumber}</div>` : ""}
           </div>
+          ${
+            folder.source === "local"
+              ? `<div>
+                  <button class="btn secondary" onclick="event.stopPropagation(); removeFolder('${folder.id}')">
+                    Remove From DB
+                  </button>
+                </div>`
+              : ""
+          }
         </div>
       `;
     })
     .join("");
 }
+
+
+// Remove folder
+// Fixed Remove folder function - update this in your code
+function removeFolder(folderId) {
+  if (!db) {
+    console.error("DB not initialized");
+    return;
+  }
+
+  console.log("🗑️ Starting folder removal for ID:", folderId);
+  
+  // Remove from uploadedFolders array
+  uploadedFolders = uploadedFolders.filter(f => f.id != folderId);
+  
+  // Update BOTH localStorage keys to be consistent
+  // This is the key fix - your code was using different localStorage keys
+  const localFolders = getLocalFolders();
+  localStorage.setItem("dicomFolders", JSON.stringify(localFolders));
+  localStorage.removeItem("uploadedFolders"); // Remove the old key if it exists
+  
+  console.log("✅ Removed from localStorage with correct key");
+  
+  // Update UI immediately
+  displayFolders(uploadedFolders);
+  console.log("✅ UI updated");
+
+  // Remove from IndexedDB
+  const transaction = db.transaction(["folders", "dicomFiles"], "readwrite");
+
+  transaction.oncomplete = () => {
+    console.log("✅ IndexedDB deletion completed successfully");
+  };
+
+  transaction.onerror = (event) => {
+    console.error("❌ IndexedDB deletion failed:", event.target.error);
+  };
+
+  // Delete folder from IndexedDB
+  const folderStore = transaction.objectStore("folders");
+  const folderDeleteRequest = folderStore.delete(Number(folderId));
+  
+  folderDeleteRequest.onsuccess = () => {
+    console.log("✅ Folder deleted from IndexedDB");
+  };
+  
+  folderDeleteRequest.onerror = (event) => {
+    console.error("❌ Error deleting folder from IndexedDB:", event.target.error);
+  };
+
+  // Delete related files from IndexedDB
+  const fileStore = transaction.objectStore("dicomFiles");
+  
+  if (fileStore.indexNames.contains("folderId")) {
+    const index = fileStore.index("folderId");
+    const request = index.openCursor(IDBKeyRange.only(Number(folderId)));
+    
+    let deletedFilesCount = 0;
+
+    request.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (cursor) {
+        fileStore.delete(cursor.primaryKey);
+        deletedFilesCount++;
+        cursor.continue();
+      } else {
+        console.log(`✅ ${deletedFilesCount} files deleted from IndexedDB`);
+      }
+    };
+
+    request.onerror = (event) => {
+      console.error("❌ Error deleting files from IndexedDB:", event.target.error);
+    };
+  } else {
+    console.warn("⚠️ folderId index not found, trying alternative deletion");
+    const allFilesRequest = fileStore.getAll();
+    allFilesRequest.onsuccess = (event) => {
+      const allFiles = event.target.result;
+      const filesToDelete = allFiles.filter(file => file.folderId == folderId);
+      filesToDelete.forEach(file => {
+        fileStore.delete(file.id);
+      });
+      console.log(`✅ ${filesToDelete.length} files deleted using alternative method`);
+    };
+  }
+}
+
+// Also update the clearAllData function to clear the correct localStorage key
+function clearAllData() {
+  console.log("🧹 Clearing all data...");
+  
+  // Clear BOTH localStorage keys to be safe
+  localStorage.removeItem("uploadedFolders");
+  localStorage.removeItem("dicomFolders"); // This is the one being used
+  uploadedFolders = [...pacsStudies]; // Keep PACS studies
+  
+  // Clear IndexedDB
+  if (db) {
+    const transaction = db.transaction(["folders", "dicomFiles"], "readwrite");
+    
+    transaction.oncomplete = () => {
+      console.log("✅ All data cleared");
+      displayFolders(uploadedFolders);
+    };
+    
+    const folderStore = transaction.objectStore("folders");
+    const fileStore = transaction.objectStore("dicomFiles");
+    
+    folderStore.clear();
+    fileStore.clear();
+  }
+}
+
 
 // Open DICOM viewer
 function openDicomViewer(folderId) {
@@ -664,10 +831,10 @@ function openDicomViewer(folderId) {
     return;
   }
 
-  console.log("Opening viewer for folder:", folder);
+  // console.log("Opening viewer for folder:", folder);
 
   sessionStorage.setItem("selectedFolderId", folderId);
-debugger;
+// debugger;
   if (folder.source === "pacs") {
     sessionStorage.setItem("pacsStudyId", folder.studyId);
     sessionStorage.setItem("pacsServerUrl", PACS_SERVER_URL);

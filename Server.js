@@ -9,7 +9,7 @@ app.use(cors());
 app.use(
   "/orthanc",
   createProxyMiddleware({
-    target: "http://localhost:8042",   // Orthanc का असली URL
+    target: "http://localhost:8042",   
     changeOrigin: true,
     pathRewrite: { "^/orthanc": "" },
   })
