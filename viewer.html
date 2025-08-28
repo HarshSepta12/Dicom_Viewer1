@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Modern DICOM Viewer </title>
+    <title>Modern DICOM Viewer</title>
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
@@ -19,7 +19,6 @@
       href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
     />
 
-   
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -29,6 +28,7 @@
     <script src="./js/cornerstone-math.js"></script>
     <script src="./js/cornerstone-wado-image-loader.js"></script>
     <script src="./js/cornerstone-tools.js"></script>
+    <!-- <script src="https://unpkg.com/@cornerstonejs/core?module"></script> -->
   </head>
   <body>
     <div class="app-header">
@@ -168,6 +168,11 @@
               </div>
             </div>
           </div>
+          <div class="tool-group">
+            <button class="tool-btn" id="mprTool" title="MPR View">
+              <i class="fas fa-cubes"></i>
+            </button>
+          </div>
 
           <div class="preset-buttons">
             <button class="preset-btn" onclick="applyPreset('soft')">
@@ -239,12 +244,12 @@
             </div>
           </div>
 
-          <div class="empty-state" id="emptyState">
+          <!-- <div class="empty-state" id="emptyState">
             <div class="empty-icon">
               <i class="fas fa-file-medical"></i>
             </div>
             <div>Upload DICOM files to begin viewing</div>
-          </div>
+          </div> -->
 
           <div id="viewportContainer" style="width: 100%; height: 100%">
             <div
@@ -254,6 +259,275 @@
             ></div>
           </div>
 
+        
+  <div
+            id="mprContainer"
+            style="
+              display: none;
+              width: 100%;
+              height: 100%;
+              grid-template-rows: auto 1fr;
+              gap: 5px;
+              background: #0b1426;
+            "
+          >
+            <!-- MPR Controls Header -->
+            <div
+              class="mpr-controls"
+              style="
+                background: rgba(26, 35, 50, 0.95);
+                padding: 10px 20px;
+                border-bottom: 1px solid #374151;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 15px;
+                z-index: 15;
+              "
+            >
+              <!-- MPR Title and Info -->
+              <div
+                class="mpr-info"
+                style="display: flex; align-items: center; gap: 15px"
+              >
+                <h3
+                  style="
+                    color: #e5e7eb;
+                    margin: 0;
+                    font-size: 16px;
+                    font-weight: 600;
+                  "
+                >
+                  <i
+                    class="fas fa-cubes"
+                    style="color: #3b82f6; margin-right: 8px"
+                  ></i>
+                  Multi-Planar Reconstruction
+                </h3>
+                <div
+                  class="mpr-position"
+                  id="mprPosition"
+                  style="
+                    color: #9ca3af;
+                    font-size: 12px;
+                    font-family: monospace;
+                    background: rgba(55, 65, 81, 0.5);
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                  "
+                >
+                  Position: (0.5, 0.5, 0.5)
+                </div>
+              </div>
+
+              <!-- MPR Navigation Controls -->
+              <div
+                class="mpr-navigation"
+                style="display: flex; align-items: center; gap: 10px"
+              >
+                <!-- Crosshair Reset Button -->
+                <button
+                  class="mpr-btn"
+                  id="mprResetBtn"
+                  title="Reset Crosshair to Center"
+                  style="
+                    background: rgba(75, 85, 99, 0.8);
+                    border: 1px solid #6b7280;
+                    color: #e5e7eb;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    transition: all 0.2s;
+                  "
+                >
+                  <i class="fas fa-crosshairs"></i> Reset
+                </button>
+
+                <!-- Sync Window/Level Toggle -->
+                <button
+                  class="mpr-btn"
+                  id="mprSyncBtn"
+                  title="Synchronize Window/Level"
+                  style="
+                    background: rgba(59, 130, 246, 0.8);
+                    border: 1px solid #3b82f6;
+                    color: white;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    transition: all 0.2s;
+                  "
+                >
+                  <i class="fas fa-sync"></i> Sync W/L
+                </button>
+
+                <!-- Exit MPR Button -->
+                <button
+                  class="mpr-btn"
+                  id="mprExitBtn"
+                  title="Exit MPR Mode"
+                  style="
+                    background: rgba(239, 68, 68, 0.8);
+                    border: 1px solid #ef4444;
+                    color: white;
+                    padding: 6px 12px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    transition: all 0.2s;
+                  "
+                >
+                  <i class="fas fa-times"></i> Exit MPR
+                </button>
+              </div>
+
+              <!-- Keyboard Shortcuts Info -->
+              <div
+                class="mpr-shortcuts"
+                style="
+                  color: #6b7280;
+                  font-size: 10px;
+                  text-align: right;
+                  line-height: 1.3;
+                "
+              >
+                <div>
+                  <strong>Controls:</strong> WASD (crosshair), QE (slice), ESC
+                  (exit)
+                </div>
+                <div>Click on any view to move crosshair</div>
+              </div>
+            </div>
+
+            <!-- MPR Viewports Grid -->
+            <div
+              class="mpr-grid"
+              style="
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                gap: 2px;
+                height: 100%;
+                background: #000;
+              "
+            >
+              <!-- Axial Viewport -->
+              <div
+                class="mpr-viewport-container"
+                style="position: relative; background: #000"
+              >
+                <div
+                  id="mprAxial"
+                  class="dicom-viewport mpr-viewport"
+                  style="
+                    width: 100%;
+                    height: 100%;
+                    border: 2px solid #374151;
+                    transition: border-color 0.2s;
+                  "
+                ></div>
+
+                <!-- Axial Overlay Info -->
+                <div
+                  class="mpr-overlay-info"
+                  style="
+                    position: absolute;
+                    top: 35px;
+                    left: 10px;
+                    color: #fbbf24;
+                    font-size: 11px;
+                    font-family: monospace;
+                    background: rgba(0, 0, 0, 0.7);
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    pointer-events: none;
+                    z-index: 20;
+                  "
+                >
+                  <div id="axialSliceInfo">Slice: 1/100</div>
+                  <div id="axialOrientationInfo">A-P | R-L</div>
+                </div>
+              </div>
+
+              <!-- Sagittal Viewport -->
+              <div
+                class="mpr-viewport-container"
+                style="position: relative; background: #000"
+              >
+                <div
+                  id="mprSagittal"
+                  class="dicom-viewport mpr-viewport"
+                  style="
+                    width: 100%;
+                    height: 100%;
+                    border: 2px solid #374151;
+                    transition: border-color 0.2s;
+                  "
+                ></div>
+
+                <!-- Sagittal Overlay Info -->
+                <div
+                  class="mpr-overlay-info"
+                  style="
+                    position: absolute;
+                    top: 35px;
+                    left: 10px;
+                    color: #fbbf24;
+                    font-size: 11px;
+                    font-family: monospace;
+                    background: rgba(0, 0, 0, 0.7);
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    pointer-events: none;
+                    z-index: 20;
+                  "
+                >
+                  <div id="sagittalSliceInfo">Slice: 1/512</div>
+                  <div id="sagittalOrientationInfo">S-I | A-P</div>
+                </div>
+              </div>
+
+              <!-- Coronal Viewport -->
+              <div
+                class="mpr-viewport-container"
+                style="position: relative; background: #000"
+              >
+                <div
+                  id="mprCoronal"
+                  class="dicom-viewport mpr-viewport"
+                  style="
+                    width: 100%;
+                    height: 100%;
+                    border: 2px solid #374151;
+                    transition: border-color 0.2s;
+                  "
+                ></div>
+
+                <!-- Coronal Overlay Info -->
+                <div
+                  class="mpr-overlay-info"
+                  style="
+                    position: absolute;
+                    top: 35px;
+                    left: 10px;
+                    color: #fbbf24;
+                    font-size: 11px;
+                    font-family: monospace;
+                    background: rgba(0, 0, 0, 0.7);
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    pointer-events: none;
+                    z-index: 20;
+                  "
+                >
+                  <div id="coronalSliceInfo">Slice: 1/512</div>
+                  <div id="coronalOrientationInfo">S-I | R-L</div>
+                </div>
+              </div>
+            </div>
+          </div>
           <!-- <div id="dicomImage" class="dicom-viewport"></div>
 <div id="viewportContainer"></div> -->
 

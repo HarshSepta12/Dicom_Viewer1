@@ -1341,3 +1341,34 @@ body {
   border: 2px dashed rgb(77, 77, 114);
   padding: 10px;
 }
+
+
+/* Force all MPR viewports to equal height */
+.mpr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-auto-rows: 1fr;   /* सभी rows बराबर ऊँचाई लें */
+  height: 100%;
+}
+
+
+
+.mpr-viewport-container {
+  position: relative;
+  background: #000;
+  height: 100% !important;
+}
+
+.mpr-viewport {
+  width: 100% !important;
+  height: 100% !important;
+  background: #000;
+}
+
+
+.mpr-viewport canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
