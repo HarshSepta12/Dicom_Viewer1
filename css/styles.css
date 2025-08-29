@@ -1343,32 +1343,68 @@ body {
 }
 
 
+
+
+
+
 /* Force all MPR viewports to equal height */
 .mpr-grid {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  grid-auto-rows: 1fr;   /* सभी rows बराबर ऊँचाई लें */
-  height: 100%;
+  grid-template-rows: 1fr; /* Single row, equal height */
+  height: calc(100vh - 120px); /* Account for header space */
+  gap: 2px;
+  background: #000;
 }
-
-
 
 .mpr-viewport-container {
   position: relative;
   background: #000;
+  min-height: 0; /* Allow shrinking */
+  overflow: hidden; /* Prevent overflow */
+}
+
+.mpr-viewport {
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  position: relative;
+  min-height: 400px; /* Minimum height for visibility */
+    border: 1px solid #333 !important;
+}
+
+.mpr-viewport canvas {
+  width: 100% !important;
   height: 100% !important;
+  object-fit: contain; /* Maintain aspect ratio */
+  image-rendering: crisp-edges; /* Better for medical images */
+}
+/* MPR specific styles */
+.mpr-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr 1fr !important;
+  grid-template-rows: 1fr !important;
+  height: 100% !important;
+  gap: 2px;
+  background: #000;
+}
+
+.mpr-viewport-container {
+  position: relative;
+  background: #000;
+  min-height: 400px;
+  overflow: hidden;
 }
 
 .mpr-viewport {
   width: 100% !important;
   height: 100% !important;
-  background: #000;
+  background: #000000;
+  position: relative;
+  min-height: 400px;
 }
 
 
-.mpr-viewport canvas {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  image-rendering: pixelated;
+.mpr-viewport:hover {
+  border-color: #0f0 !important;
 }

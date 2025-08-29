@@ -180,7 +180,7 @@ async function loadFromPACS() {
           headers: headers,
         });
         const studyInfo = await studyResponse.json();
-        // console.log(studyInfo.PatientMainDicomTags);
+        // console.log(studyInfo);
         
         const instancesResponse = await fetch(`${PACS_SERVER_URL}/studies/${studyId}/instances`, {
           method: "GET",
@@ -251,6 +251,8 @@ async function processFolderUpload(files) {
   showLoading(true, "Processing folder...");
 
   const folderName = files[0].webkitRelativePath.split("/")[0];
+  console.log(files);
+  
   const folderId = Date.now();
   const dicomFilesMeta = [];
 

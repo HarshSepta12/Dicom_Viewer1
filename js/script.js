@@ -14,26 +14,19 @@ if (typeof dicomParser === "undefined") {
 
 // Initialize Cornerstone Tools
 if (typeof cornerstoneTools !== "undefined") {
-  cornerstoneTools.external.Hammer =
-    typeof Hammer !== "undefined" ? Hammer : undefined;
+  cornerstoneTools.external.Hammer =  typeof Hammer !== "undefined" ? Hammer : undefined;
   cornerstoneTools.external.cornerstone = cornerstone;
-  cornerstoneTools.external.cornerstoneMath =
-    typeof cornerstoneMath !== "undefined" ? cornerstoneMath : undefined;
-
+  cornerstoneTools.external.cornerstoneMath = typeof cornerstoneMath !== "undefined" ? cornerstoneMath : undefined;
   cornerstoneTools.init({
     showSVGCursors: true,
   });
 }
-
 
 // Initialize WADO Image Loader
 if (typeof cornerstoneWADOImageLoader !== "undefined") {
   cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
   cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
 }
-
-
-
 
 let allSeries = {};
 let currentSeriesId = null;
@@ -43,8 +36,7 @@ let activeViewport = null;
 const API_BASE = "http://localhost:5000/orthanc";
 const urlParams = new URLSearchParams(window.location.search);
 const studyId = urlParams.get("study");
-
-
+  
 // Cine playback variables
 let isPlaying = false;
 let playbackInterval = null;
@@ -67,11 +59,6 @@ const seriesContainer = document.getElementById("seriesContainer");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const statusText = document.getElementById("statusText");
 const loadingText = document.getElementById("loadingText");
-const mprBtn = document.getElementById("mprTool");
-if (mprBtn) {
-  mprBtn.addEventListener("click", () => activateMPR());
-}
-
 
 // Cine control elements
 const cineControls = document.getElementById("cineControls");
@@ -87,14 +74,12 @@ const progressThumb = document.getElementById("progressThumb");
 const currentTimeDisplay = document.getElementById("currentTime");
 const totalTimeDisplay = document.getElementById("totalTime");
 
-
 // Initialize when DOM is ready
 document.addEventListener("DOMContentLoaded", function () {
-  console.log('DOM Content Loaded');
+  console.log("DOM Content Loaded");
 
   // Enable cornerstone on the main viewport
-  if (typeof dicomImage !== 'undefined' && dicomImage) {
-    // console.log('Enabling cornerstone on dicomImage');
+  if (typeof dicomImage !== "undefined" && dicomImage) {
     cornerstone.enable(dicomImage);
     activeViewport = dicomImage;
   }
@@ -107,8 +92,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const folderId = sessionStorage.getItem("selectedFolderId");
   const dataSource = sessionStorage.getItem("dataSource");
 
-  // console.log('Initialization data:', { hasDicomData, folderId, dataSource });
-
   if (hasDicomData === "true" && folderId) {
     if (dataSource === "pacs") {
       loadPacsData(folderId);
@@ -117,10 +100,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 });
-// Enhanced MPR functionality for DICOM Viewer
-// Fixed version with proper image reconstruction
 
-// MPR state management
+// Enhanced MPR functionality for DICOM Viewer - COMPLETE VERSION
+// MPR state management - Enhanced
 let mprState = {
   isActive: false,
   volumeData: null,
@@ -128,245 +110,473 @@ let mprState = {
   viewports: {
     axial: null,
     sagittal: null,
-    coronal: null
+    coronal: null,
   },
   imageData: {
     axial: [],
     sagittal: [],
-    coronal: []
+    coronal: [],
   },
   dimensions: null,
   spacing: null,
   currentSlices: {
     axial: 0,
     sagittal: 0,
-    coronal: 0
-  }
+    coronal: 0,
+  },
+  // Cache for better performance
+  cachedImages: {
+    sagittal: new Map(),
+    coronal: new Map(),
+  },
+  isInitialized: false,
 };
 
-// Enhanced MPR activation function
+// Enhanced MPR activation function 
 async function activateMPR() {
   const container = document.getElementById("mprContainer");
   const normalViewport = document.getElementById("viewportContainer");
   const dicomImage = document.getElementById("dicomImage");
-
+ 
+  // Validate prerequisites
   if (!currentSeriesId || !allSeries[currentSeriesId]) {
-    showError("No series loaded for MPR");
+    showError("No series loaded. Please load DICOM images first.");
     return;
   }
 
   const series = allSeries[currentSeriesId];
-  if (series.images.length < 5) {
-    showError("MPR requires at least 5 images in the series");
+  if (!series || !series.images || series.images.length < 1) {
+    showError("Current series has no images or insufficient images for MPR.");
     return;
   }
+
+  console.log(`Starting MPR with series: ${currentSeriesId}, images: ${series.images.length}`);
 
   showLoading(true, "Preparing MPR views...");
 
   try {
+    // Clean up any existing MPR state first
+    if (mprState.isActive || mprState.isInitialized) {
+      console.log("Cleaning up existing MPR state...");
+      await cleanupMPR();
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
     // Hide normal view
     if (normalViewport) normalViewport.style.display = "none";
     if (dicomImage) dicomImage.style.display = "none";
 
     // Show MPR container
+    if (!container) {
+      throw new Error("MPR container not found in DOM");
+    }
     container.style.display = "grid";
     mprState.isActive = true;
 
-    // Prepare volume data
+    // Step 1: Prepare volume data
+    updateStatus("Step 1/4: Preparing volume data...");
     await prepareVolumeData(series);
+    
+    if (!mprState.volumeData || mprState.volumeData.length === 0) {
+      throw new Error("Volume data preparation failed - no data available");
+    }
 
-    // Initialize MPR viewports
+    // Step 2: Initialize MPR viewports
+    updateStatus("Step 2/4: Initializing viewports...");
     await initializeMPRViewports();
 
-    // Setup synchronization
+    if (!mprState.viewports.axial || !mprState.viewports.sagittal || !mprState.viewports.coronal) {
+      throw new Error("Failed to initialize MPR viewports");
+    }
+
+    // Step 3: Setup synchronization
+    updateStatus("Step 3/4: Setting up synchronization...");
     setupMPRSynchronization();
 
-    // Initial render
+    // Step 4: Initial render
+    updateStatus("Step 4/4: Rendering MPR views...");
     await renderMPRViews();
 
-    // Setup MPR-specific tools
+    // Setup MPR-specific tools and controls
     setupMPRTools();
+    setupMPRControls();
 
-    showSuccess("MPR Mode Activated");
-    updateStatus("MPR Mode - Use WASD to move crosshair, QE for slices");
+    mprState.isInitialized = true;
+    showSuccess("MPR Mode Activated Successfully");
+    updateStatus(`MPR Mode - ${mprState.volumeData.length} images loaded`);
+
   } catch (err) {
     console.error("MPR activation failed:", err);
     showError("MPR activation failed: " + err.message);
-    deactivateMPR();
+    
+    // Cleanup on failure
+    try {
+      await cleanupMPR();
+      
+      // Restore normal view
+      if (container) container.style.display = "none";
+      if (normalViewport) normalViewport.style.display = "block";
+      if (dicomImage) dicomImage.style.display = "block";
+      
+    } catch (cleanupError) {
+      console.error("Cleanup after failure also failed:", cleanupError);
+    }
   } finally {
     showLoading(false);
   }
 }
 
-// Fixed volume data preparation
+// Enhanced volume data preparation with better error handling
 async function prepareVolumeData(series) {
-  updateStatus("Loading volume data...");
-  
+  updateStatus("Loading and sorting volume data...");
+
+  if (!series || !series.images || series.images.length === 0) {
+    throw new Error("No series or images provided for volume preparation");
+  }
+
+  console.log(`Preparing volume data for ${series.images.length} images`);
+
   const images = [];
   let loadedCount = 0;
-  
+
+  // Sort images by instance number or slice location for proper ordering
+  const sortedImages = [...series.images].sort((a, b) => {
+    const aNum = a.instanceNumber || 0;
+    const bNum = b.instanceNumber || 0;
+    return aNum - bNum;
+  });
+
+  console.log("Sorted images:", sortedImages.length);
+
   // Load all images with progress tracking
-  for (let i = 0; i < series.images.length; i++) {
+  for (let i = 0; i < sortedImages.length; i++) {
     try {
-      const image = await cornerstone.loadImage(series.images[i].imageId);
+      updateStatus(`Loading slice ${i + 1}/${sortedImages.length}...`);
+      
+      const imageId = sortedImages[i].imageId;
+      if (!imageId) {
+        throw new Error(`No imageId found for image ${i + 1}`);
+      }
+
+      console.log(`Loading image ${i + 1}: ${imageId}`);
+      
+      const image = await cornerstone.loadAndCacheImage(imageId);
+
+      // Validate image data
+      if (!image) {
+        throw new Error(`Failed to load image ${i + 1}`);
+      }
+
+      if (!image.getPixelData || typeof image.getPixelData !== "function") {
+        throw new Error(`Invalid image data for slice ${i + 1} - no getPixelData function`);
+      }
+
+      const pixelData = image.getPixelData();
+      if (!pixelData || pixelData.length === 0) {
+        throw new Error(`Empty pixel data for slice ${i + 1}`);
+      }
+
+      // Validate dimensions
+      if (!image.width || !image.height || image.width <= 0 || image.height <= 0) {
+        throw new Error(`Invalid dimensions for slice ${i + 1}: ${image.width}x${image.height}`);
+      }
+
       images[i] = image;
       loadedCount++;
-      updateStatus(`Loading slice ${loadedCount}/${series.images.length}...`);
-      
-      // Allow UI to update
-      if (i % 5 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 1));
+
+      console.log(`Successfully loaded image ${i + 1}/${sortedImages.length}`);
+
+      // Allow UI to update every few images
+      if (i % 3 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
     } catch (error) {
-      console.error(`Failed to load image ${i}:`, error);
+      console.error(`Failed to load image ${i + 1}:`, error);
       throw new Error(`Failed to load image ${i + 1}: ${error.message}`);
     }
   }
 
-  // Validate images have consistent dimensions
-  const firstImage = images[0];
-  const inconsistentImage = images.find(img => 
-    img.width !== firstImage.width || img.height !== firstImage.height
-  );
-  
-  if (inconsistentImage) {
-    throw new Error("Images have inconsistent dimensions - cannot create MPR");
+  if (images.length === 0 || loadedCount === 0) {
+    throw new Error("No images were successfully loaded");
   }
 
+  // Validate images have consistent dimensions
+  const firstImage = images[0];
+  if (!firstImage) {
+    throw new Error("First image is null or undefined");
+  }
+
+  for (let i = 1; i < images.length; i++) {
+    if (!images[i]) {
+      throw new Error(`Image ${i + 1} is null or undefined`);
+    }
+    
+    if (
+      images[i].width !== firstImage.width ||
+      images[i].height !== firstImage.height
+    ) {
+      throw new Error(
+        `Image ${i + 1} has inconsistent dimensions (${images[i].width}x${
+          images[i].height
+        }) compared to first image (${firstImage.width}x${firstImage.height})`
+      );
+    }
+  }
+
+  // Store the volume data
   mprState.volumeData = images;
-  
+
   // Extract image dimensions and spacing
   mprState.dimensions = {
     width: firstImage.width,
     height: firstImage.height,
-    depth: images.length
+    depth: images.length,
   };
 
-  // Get pixel spacing from DICOM metadata or use defaults
+  // Get pixel spacing from DICOM metadata with better fallbacks
   mprState.spacing = {
-    x: firstImage.columnPixelSpacing || 1,
-    y: firstImage.rowPixelSpacing || 1,
-    z: firstImage.sliceThickness || firstImage.sliceLocation || 1
+    x: firstImage.columnPixelSpacing || firstImage.pixelSpacing?.[0] || 1.0,
+    y: firstImage.rowPixelSpacing || firstImage.pixelSpacing?.[1] || 1.0,
+    z: getSliceSpacing(images) || firstImage.sliceThickness || 1.0,
   };
 
-  console.log("Volume prepared:", mprState.dimensions, mprState.spacing);
+  // Clear any cached reformatted data
+  mprState.cachedImages.sagittal.clear();
+  mprState.cachedImages.coronal.clear();
+
+  console.log("Volume prepared successfully:", {
+    dimensions: mprState.dimensions,
+    spacing: mprState.spacing,
+    imageCount: mprState.volumeData.length
+  });
+
+  updateStatus(`Volume data prepared: ${loadedCount} images`);
 }
 
-// Initialize MPR viewports with proper cleanup
+// Calculate slice spacing from image positions
+function getSliceSpacing(images) {
+  if (images.length < 2) return 1.0;
+
+  try {
+    // Try to get from image position if available
+    const first = images[0];
+    const second = images[1];
+
+    if (first.imagePositionPatient && second.imagePositionPatient) {
+      const pos1 = first.imagePositionPatient;
+      const pos2 = second.imagePositionPatient;
+      const dx = pos2[0] - pos1[0];
+      const dy = pos2[1] - pos1[1];
+      const dz = pos2[2] - pos1[2];
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    // Fallback to slice location if available
+    if (
+      first.sliceLocation !== undefined &&
+      second.sliceLocation !== undefined
+    ) {
+      return Math.abs(second.sliceLocation - first.sliceLocation);
+    }
+  } catch (e) {
+    console.warn("Could not calculate slice spacing:", e);
+  }
+
+  return 1.0;
+}
+
+// Enhanced viewport initialization with proper cleanup
 async function initializeMPRViewports() {
   const axialEl = document.getElementById("mprAxial");
   const sagittalEl = document.getElementById("mprSagittal");
   const coronalEl = document.getElementById("mprCoronal");
 
   if (!axialEl || !sagittalEl || !coronalEl) {
-    throw new Error("MPR viewport elements not found");
+    throw new Error("MPR viewport elements not found in DOM");
   }
 
-  // Disable existing cornerstone instances
-  [axialEl, sagittalEl, coronalEl].forEach(el => {
-    try {
-      if (cornerstone.getEnabledElements().some(e => e.element === el)) {
-        cornerstone.disable(el);
-      }
-    } catch (e) {
-      // Ignore disable errors
-    }
-    el.innerHTML = '';
-  });
+  const allViewports = [axialEl, sagittalEl, coronalEl];
 
-  // Enable cornerstone with delay to ensure proper cleanup
-  await new Promise(resolve => setTimeout(resolve, 100));
+  // Clean up existing instances thoroughly
+  for (const el of allViewports) {
+    await cleanupViewport(el);
+  }
+
+  // Wait for cleanup to complete
+  await new Promise(resolve => setTimeout(resolve, 200));
 
   try {
-    cornerstone.enable(axialEl);
-    cornerstone.enable(sagittalEl);  
-    cornerstone.enable(coronalEl);
+    // Enable cornerstone on each viewport with proper sizing
+    for (const el of allViewports) {
+      // Ensure proper sizing before enabling
+      el.style.width = "100%";
+      el.style.height = "100%";
+      el.style.position = "relative";
+      el.style.overflow = "hidden";
+      
+      cornerstone.enable(el);
+      
+      // Force a resize to ensure proper canvas dimensions
+      setTimeout(() => {
+        try {
+          cornerstone.resize(el, true);
+        } catch (e) {
+          console.warn("Resize failed for element:", e);
+        }
+      }, 100);
+    }
   } catch (error) {
-    throw new Error("Failed to enable cornerstone on MPR viewports: " + error.message);
+    throw new Error(
+      "Failed to enable cornerstone on MPR viewports: " + error.message
+    );
   }
 
   mprState.viewports = {
     axial: axialEl,
     sagittal: sagittalEl,
-    coronal: coronalEl
+    coronal: coronalEl,
   };
 
   // Add viewport labels with better styling
-  addViewportLabel(axialEl, "Axial (XY)", "#ff6b6b");
-  addViewportLabel(sagittalEl, "Sagittal (YZ)", "#4ecdc4");
-  addViewportLabel(coronalEl, "Coronal (XZ)", "#45b7d1");
+  addViewportLabel(axialEl, "Axial", "#ff6b6b");
+  addViewportLabel(sagittalEl, "Sagittal", "#4ecdc4");
+  addViewportLabel(coronalEl, "Coronal", "#45b7d1");
 
-  // Generate reformatted images for sagittal and coronal views
-  await generateReformattedImages();
+  console.log("MPR viewports initialized successfully");
 }
 
-// Fixed image reconstruction with proper pixel data handling
+// Enhanced viewport cleanup
+async function cleanupViewport(element) {
+  if (!element) return;
+
+  try {
+    // Remove all event listeners
+    ['click', 'mouseenter', 'mouseleave', 'cornerstoneimagerendered'].forEach(eventType => {
+      const handlerName = `_mpr${eventType.charAt(0).toUpperCase() + eventType.slice(1)}Handler`;
+      if (element[handlerName]) {
+        element.removeEventListener(eventType, element[handlerName]);
+        element[handlerName] = null;
+      }
+    });
+
+    // Clear cornerstone tools state
+    if (typeof cornerstoneTools !== "undefined") {
+      try {
+        cornerstoneTools.clearToolState(element, "stack");
+      } catch (e) {
+        // Ignore tool cleanup errors
+      }
+    }
+
+    // Disable cornerstone
+    const enabledElements = cornerstone.getEnabledElements();
+    const enabledElement = enabledElements.find((e) => e.element === element);
+
+    if (enabledElement) {
+      cornerstone.disable(element);
+    }
+
+    // Clear DOM content
+    while (element.firstChild) {
+      element.removeChild(element.firstChild);
+    }
+
+    // Reset styling
+    element.style.borderColor = "#374151";
+    element.style.cursor = "default";
+
+    // Small delay to ensure cleanup
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+  } catch (error) {
+    console.warn("Error during viewport cleanup:", error);
+  }
+}
+
+// FIXED: Generate reformatted images with correct orientation and pixel ordering
 async function generateReformattedImages() {
   const { width, height, depth } = mprState.dimensions;
-  
+
   updateStatus("Generating sagittal reconstructions...");
-  
-  // Generate sagittal slices (YZ plane) - Fixed algorithm
+
+  // Generate sagittal slices (YZ plane) - FIXED orientation
   mprState.imageData.sagittal = [];
   for (let x = 0; x < width; x++) {
     const sagittalData = new Uint16Array(height * depth);
-    
+
     for (let z = 0; z < depth; z++) {
       const sourceImage = mprState.volumeData[z];
       const sourcePixelData = sourceImage.getPixelData();
-      
+
       for (let y = 0; y < height; y++) {
         const sourceIndex = y * width + x;
-        // Fixed orientation - don't flip Z axis unnecessarily
-        const targetIndex = z * height + y;
+        // FIXED: Proper orientation for sagittal view (YZ plane, looking from right side)
+        // Flip Z axis so superior is up, and maintain Y axis orientation
+        const targetIndex = (depth - 1 - z) * height + y;
         sagittalData[targetIndex] = sourcePixelData[sourceIndex];
       }
     }
-    
+
     mprState.imageData.sagittal.push(sagittalData);
-    
+
     // Progress update every 20 slices
     if (x % 20 === 0) {
       updateStatus(`Generating sagittal ${x + 1}/${width}...`);
-      await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 1));
     }
   }
 
   updateStatus("Generating coronal reconstructions...");
-  
-  // Generate coronal slices (XZ plane) - Fixed algorithm  
+
+  // Generate coronal slices (XZ plane) - FIXED orientation
   mprState.imageData.coronal = [];
   for (let y = 0; y < height; y++) {
     const coronalData = new Uint16Array(width * depth);
-    
+
     for (let z = 0; z < depth; z++) {
       const sourceImage = mprState.volumeData[z];
       const sourcePixelData = sourceImage.getPixelData();
-      
+
       for (let x = 0; x < width; x++) {
-        const sourceIndex = y * width + x;
-        // Fixed orientation
-        const targetIndex = z * width + x;
+        // FIXED: Use proper Y index (from anterior/posterior)
+        const sourceIndex = (height - 1 - y) * width + x;
+        // FIXED: Proper orientation for coronal view (XZ plane, looking from front)
+        // Flip Z axis so superior is up
+        const targetIndex = (depth - 1 - z) * width + x;
         coronalData[targetIndex] = sourcePixelData[sourceIndex];
       }
     }
-    
+
     mprState.imageData.coronal.push(coronalData);
-    
+
     // Progress update every 20 slices
     if (y % 20 === 0) {
       updateStatus(`Generating coronal ${y + 1}/${height}...`);
-      await new Promise(resolve => setTimeout(resolve, 1));
+      await new Promise((resolve) => setTimeout(resolve, 1));
     }
   }
-  
+
   updateStatus("MPR reconstruction complete");
 }
 
-// Fixed synthetic image creation with proper metadata
-function createSyntheticImage(pixelData, width, height, referenceImage, orientation) {
+// FIXED: Create synthetic images with proper cornerstone compatibility
+function createSyntheticImage(
+  pixelData,
+  width,
+  height,
+  referenceImage,
+  orientation
+) {
   if (!pixelData || pixelData.length === 0) {
     throw new Error("Invalid pixel data for synthetic image");
+  }
+
+  if (pixelData.length !== width * height) {
+    throw new Error(
+      `Pixel data size mismatch: expected ${width * height}, got ${
+        pixelData.length
+      }`
+    );
   }
 
   // Create a proper image object that cornerstone can handle
@@ -376,37 +586,71 @@ function createSyntheticImage(pixelData, width, height, referenceImage, orientat
     maxPixelValue: referenceImage.maxPixelValue || 4095,
     slope: referenceImage.slope || 1,
     intercept: referenceImage.intercept || 0,
-    windowCenter: referenceImage.windowCenter || 512,
-    windowWidth: referenceImage.windowWidth || 1024,
+    windowCenter:
+      referenceImage.windowCenter || (referenceImage.maxPixelValue || 2048) / 2,
+    windowWidth:
+      referenceImage.windowWidth || referenceImage.maxPixelValue || 4095,
     getPixelData: () => pixelData,
     rows: height,
     columns: width,
     height: height,
     width: width,
     color: false,
-    columnPixelSpacing: referenceImage.columnPixelSpacing || 1,
-    rowPixelSpacing: referenceImage.rowPixelSpacing || 1,
+    columnPixelSpacing: mprState.spacing.x,
+    rowPixelSpacing:
+      orientation === "sagittal"
+        ? mprState.spacing.z
+        : orientation === "coronal"
+        ? mprState.spacing.z
+        : mprState.spacing.y,
     invert: false,
     sizeInBytes: pixelData.length * 2,
-    // Add required properties for cornerstone
-    cachedLut: referenceImage.cachedLut,
+    // Essential properties for cornerstone compatibility
+    cachedLut: undefined,
     rgba: false,
-    photometricInterpretation: referenceImage.photometricInterpretation || 'MONOCHROME2',
-    planarConfiguration: 0
+    photometricInterpretation:
+      referenceImage.photometricInterpretation || "MONOCHROME2",
+    planarConfiguration: 0,
+    samplesPerPixel: 1,
+    pixelRepresentation: referenceImage.pixelRepresentation || 0,
+    bitsAllocated: referenceImage.bitsAllocated || 16,
+    bitsStored: referenceImage.bitsStored || 16,
+    highBit: referenceImage.highBit || 15,
+    pixelPaddingValue: referenceImage.pixelPaddingValue,
   };
 
   return syntheticImage;
 }
 
-// Fixed MPR views rendering with better error handling
+// Complete renderMPRViews function - FIXED VERSION
 async function renderMPRViews() {
-  if (!mprState.volumeData || mprState.volumeData.length === 0) {
-    throw new Error("No volume data available for rendering");
+  // Validate volume data first
+  if (!mprState.volumeData) {
+    throw new Error("No volume data available - mprState.volumeData is null");
   }
 
+  if (!Array.isArray(mprState.volumeData)) {
+    throw new Error("Volume data is not an array");
+  }
+
+  if (mprState.volumeData.length === 0) {
+    throw new Error("Volume data array is empty");
+  }
+
+  console.log(`Rendering MPR views with ${mprState.volumeData.length} volume images`);
+
   const { width, height, depth } = mprState.dimensions;
+  
+  if (!width || !height || !depth) {
+    throw new Error("Invalid dimensions: " + JSON.stringify(mprState.dimensions));
+  }
+
   const { x, y, z } = mprState.crosshairPosition;
   const referenceImage = mprState.volumeData[0];
+
+  if (!referenceImage) {
+    throw new Error("First volume image is null or undefined");
+  }
 
   // Calculate slice indices with proper bounds checking
   const axialIndex = Math.max(0, Math.min(depth - 1, Math.floor(z * depth)));
@@ -414,57 +658,155 @@ async function renderMPRViews() {
   const coronalIndex = Math.max(0, Math.min(height - 1, Math.floor(y * height)));
 
   // Update current slice tracking
-  mprState.currentSlices = { axial: axialIndex, sagittal: sagittalIndex, coronal: coronalIndex };
+  mprState.currentSlices = {
+    axial: axialIndex,
+    sagittal: sagittalIndex,
+    coronal: coronalIndex,
+  };
 
   try {
+    // Generate reformatted images if not done yet
+    if (
+      mprState.imageData.sagittal.length === 0 ||
+      mprState.imageData.coronal.length === 0
+    ) {
+      await generateReformattedImages();
+    }
+
     // Render axial view (original images)
     if (mprState.viewports.axial && mprState.volumeData[axialIndex]) {
       const axialImage = mprState.volumeData[axialIndex];
       await cornerstone.displayImage(mprState.viewports.axial, axialImage);
-      updateSliceInfo('axial', axialIndex + 1, depth);
+      updateSliceInfo("axial", axialIndex + 1, depth);
     }
 
-    // Render sagittal view with validation
-    if (mprState.viewports.sagittal && mprState.imageData.sagittal[sagittalIndex]) {
-      const sagittalPixelData = mprState.imageData.sagittal[sagittalIndex];
-      if (sagittalPixelData && sagittalPixelData.length > 0) {
-        const sagittalImage = createSyntheticImage(
-          sagittalPixelData,
-          height,
-          depth,
-          referenceImage,
-          'sagittal'
-        );
+    // Render sagittal view with caching
+    if (mprState.viewports.sagittal && sagittalIndex < mprState.imageData.sagittal.length) {
+      const cacheKey = `sagittal_${sagittalIndex}`;
+      let sagittalImage = mprState.cachedImages.sagittal.get(cacheKey);
+
+      if (!sagittalImage) {
+        const sagittalPixelData = mprState.imageData.sagittal[sagittalIndex];
+        if (sagittalPixelData && sagittalPixelData.length > 0) {
+          sagittalImage = createSyntheticImage(
+            sagittalPixelData,
+            height, // width of sagittal view
+            depth,  // height of sagittal view
+            referenceImage,
+            "sagittal"
+          );
+          mprState.cachedImages.sagittal.set(cacheKey, sagittalImage);
+        }
+      }
+
+      if (sagittalImage) {
         await cornerstone.displayImage(mprState.viewports.sagittal, sagittalImage);
-        updateSliceInfo('sagittal', sagittalIndex + 1, width);
+        updateSliceInfo("sagittal", sagittalIndex + 1, width);
       }
     }
 
-    // Render coronal view with validation
-    if (mprState.viewports.coronal && mprState.imageData.coronal[coronalIndex]) {
-      const coronalPixelData = mprState.imageData.coronal[coronalIndex];
-      if (coronalPixelData && coronalPixelData.length > 0) {
-        const coronalImage = createSyntheticImage(
-          coronalPixelData,
-          width,
-          depth,
-          referenceImage,
-          'coronal'
-        );
+    // Render coronal view with caching
+    if (mprState.viewports.coronal && coronalIndex < mprState.imageData.coronal.length) {
+      const cacheKey = `coronal_${coronalIndex}`;
+      let coronalImage = mprState.cachedImages.coronal.get(cacheKey);
+
+      if (!coronalImage) {
+        const coronalPixelData = mprState.imageData.coronal[coronalIndex];
+        if (coronalPixelData && coronalPixelData.length > 0) {
+          coronalImage = createSyntheticImage(
+            coronalPixelData,
+            width, // width of coronal view
+            depth, // height of coronal view
+            referenceImage,
+            "coronal"
+          );
+          mprState.cachedImages.coronal.set(cacheKey, coronalImage);
+        }
+      }
+
+      if (coronalImage) {
         await cornerstone.displayImage(mprState.viewports.coronal, coronalImage);
-        updateSliceInfo('coronal', coronalIndex + 1, height);
+        updateSliceInfo("coronal", coronalIndex + 1, height);
       }
     }
 
     // Update crosshairs after successful rendering
     updateAllCrosshairs();
-    
+
     // Update position display
     updateMPRPosition();
 
   } catch (error) {
     console.error("Error rendering MPR views:", error);
     throw new Error("Failed to render MPR views: " + error.message);
+  }
+}
+
+// Helper functions for getting sagittal and coronal images
+async function getSagittalImage(sagittalIndex, referenceImage) {
+  const cacheKey = `sagittal_${sagittalIndex}`;
+  let sagittalImage = mprState.cachedImages.sagittal.get(cacheKey);
+
+  if (!sagittalImage && sagittalIndex < mprState.imageData.sagittal.length) {
+    const sagittalPixelData = mprState.imageData.sagittal[sagittalIndex];
+    if (sagittalPixelData && sagittalPixelData.length > 0) {
+      const { height, depth } = mprState.dimensions;
+      sagittalImage = createSyntheticImage(
+        sagittalPixelData,
+        height, // width of sagittal view
+        depth,  // height of sagittal view
+        referenceImage,
+        "sagittal"
+      );
+      mprState.cachedImages.sagittal.set(cacheKey, sagittalImage);
+    }
+  }
+
+  return sagittalImage;
+}
+
+async function getCoronalImage(coronalIndex, referenceImage) {
+  const cacheKey = `coronal_${coronalIndex}`;
+  let coronalImage = mprState.cachedImages.coronal.get(cacheKey);
+
+  if (!coronalImage && coronalIndex < mprState.imageData.coronal.length) {
+    const coronalPixelData = mprState.imageData.coronal[coronalIndex];
+    if (coronalPixelData && coronalPixelData.length > 0) {
+      const { width, depth } = mprState.dimensions;
+      coronalImage = createSyntheticImage(
+        coronalPixelData,
+        width, // width of coronal view
+        depth, // height of coronal view
+        referenceImage,
+        "coronal"
+      );
+      mprState.cachedImages.coronal.set(cacheKey, coronalImage);
+    }
+  }
+
+  return coronalImage;
+}
+
+// Helper function to render individual viewport
+async function renderViewportImage(viewport, image, plane, currentSlice, totalSlices) {
+  if (!viewport || !image) return;
+
+  try {
+    // Ensure viewport is properly sized
+    cornerstone.resize(viewport, true);
+    
+    // Display the image
+    await cornerstone.displayImage(viewport, image);
+    
+    // Get default viewport for proper scaling
+    const defaultViewport = cornerstone.getDefaultViewportForImage(viewport, image);
+    cornerstone.setViewport(viewport, defaultViewport);
+    
+    // Update slice info
+    updateSliceInfo(plane, currentSlice, totalSlices);
+    
+  } catch (error) {
+    console.error(`Error rendering ${plane} viewport:`, error);
   }
 }
 
@@ -481,91 +823,142 @@ function updateMPRPosition() {
   const positionEl = document.getElementById("mprPosition");
   if (positionEl) {
     const pos = mprState.crosshairPosition;
-    positionEl.textContent = `Position: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`;
+    const { width, height, depth } = mprState.dimensions;
+    const realPos = {
+      x: (pos.x * width).toFixed(1),
+      y: (pos.y * height).toFixed(1),
+      z: (pos.z * depth).toFixed(1),
+    };
+    positionEl.textContent = `Position: (${realPos.x}, ${realPos.y}, ${realPos.z})`;
   }
 }
 
 // Enhanced viewport interaction with better coordinate handling
 function setupMPRSynchronization() {
-  // Remove existing event listeners
-  Object.values(mprState.viewports).forEach(viewport => {
-    if (viewport && viewport._mprClickHandler) {
-      viewport.removeEventListener('click', viewport._mprClickHandler);
-      viewport._mprClickHandler = null;
+  // Clean up existing event listeners first
+  Object.values(mprState.viewports).forEach((viewport) => {
+    if (viewport) {
+      ["click", "mouseenter", "mouseleave"].forEach((eventType) => {
+        const handlerName = `_mpr${
+          eventType.charAt(0).toUpperCase() + eventType.slice(1)
+        }Handler`;
+        if (viewport[handlerName]) {
+          viewport.removeEventListener(eventType, viewport[handlerName]);
+          viewport[handlerName] = null;
+        }
+      });
     }
   });
 
-  // Add click handlers for crosshair interaction
-  setupViewportInteraction(mprState.viewports.axial, 'axial');
-  setupViewportInteraction(mprState.viewports.sagittal, 'sagittal');
-  setupViewportInteraction(mprState.viewports.coronal, 'coronal');
+  // Add interaction handlers for each viewport
+  setupViewportInteraction(mprState.viewports.axial, "axial");
+  setupViewportInteraction(mprState.viewports.sagittal, "sagittal");
+  setupViewportInteraction(mprState.viewports.coronal, "coronal");
 }
 
-// Fixed viewport interaction with proper coordinate mapping
+// FIXED: Viewport interaction with proper coordinate mapping for each plane
 function setupViewportInteraction(viewport, plane) {
   if (!viewport) return;
 
   const clickHandler = (event) => {
     event.preventDefault();
-    
+
     const rect = viewport.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    const clickX = Math.max(
+      0,
+      Math.min(1, (event.clientX - rect.left) / rect.width)
+    );
+    const clickY = Math.max(
+      0,
+      Math.min(1, (event.clientY - rect.top) / rect.height)
+    );
 
     // Update crosshair position based on which plane was clicked
+    // Coordinate system: x = left-right, y = anterior-posterior, z = superior-inferior
     switch (plane) {
-      case 'axial':
-        mprState.crosshairPosition.x = x;
-        mprState.crosshairPosition.y = y;
+      case "axial":
+        // Axial view shows XY plane (looking down from superior)
+        mprState.crosshairPosition.x = clickX;
+        mprState.crosshairPosition.y = clickY;
         break;
-      case 'sagittal':
-        mprState.crosshairPosition.y = x;
-        mprState.crosshairPosition.z = y;
+      case "sagittal":
+        // Sagittal view shows YZ plane (looking from right side)
+        // clickX corresponds to Y (anterior-posterior)
+        // clickY corresponds to Z (superior-inferior, flipped)
+        mprState.crosshairPosition.y = clickX;
+        mprState.crosshairPosition.z = 1.0 - clickY; // Flip for proper orientation
         break;
-      case 'coronal':
-        mprState.crosshairPosition.x = x;
-        mprState.crosshairPosition.z = y;
+      case "coronal":
+        // Coronal view shows XZ plane (looking from front)
+        // clickX corresponds to X (left-right)
+        // clickY corresponds to Z (superior-inferior, flipped)
+        mprState.crosshairPosition.x = clickX;
+        mprState.crosshairPosition.z = 1.0 - clickY; // Flip for proper orientation
         break;
     }
 
+    // Clamp values to [0,1] range
+    mprState.crosshairPosition.x = Math.max(
+      0,
+      Math.min(1, mprState.crosshairPosition.x)
+    );
+    mprState.crosshairPosition.y = Math.max(
+      0,
+      Math.min(1, mprState.crosshairPosition.y)
+    );
+    mprState.crosshairPosition.z = Math.max(
+      0,
+      Math.min(1, mprState.crosshairPosition.z)
+    );
+
     // Re-render all views
-    renderMPRViews().catch(error => {
+    renderMPRViews().catch((error) => {
       console.error("Error re-rendering MPR views:", error);
+      showError("Error updating MPR views: " + error.message);
     });
   };
 
+  const mouseEnterHandler = () => {
+    viewport.style.borderColor = "#00ff00";
+    viewport.style.borderWidth = "2px";
+  };
+
+  const mouseLeaveHandler = () => {
+    viewport.style.borderColor = "#374151";
+    viewport.style.borderWidth = "2px";
+  };
+
+  // Store handlers for cleanup
   viewport._mprClickHandler = clickHandler;
-  viewport.addEventListener('click', clickHandler);
-  viewport.style.cursor = 'crosshair';
-  
-  // Add hover effect
-  viewport.addEventListener('mouseenter', () => {
-    viewport.style.borderColor = '#00ff00';
-  });
-  
-  viewport.addEventListener('mouseleave', () => {
-    viewport.style.borderColor = '#374151';
-  });
+  viewport._mprMouseEnterHandler = mouseEnterHandler;
+  viewport._mprMouseLeaveHandler = mouseLeaveHandler;
+
+  // Add event listeners
+  viewport.addEventListener("click", clickHandler);
+  viewport.addEventListener("mouseenter", mouseEnterHandler);
+  viewport.addEventListener("mouseleave", mouseLeaveHandler);
+
+  viewport.style.cursor = "crosshair";
 }
 
 // Enhanced crosshair rendering
 function updateAllCrosshairs() {
-  updateCrosshairForViewport(mprState.viewports.axial, 'axial');
-  updateCrosshairForViewport(mprState.viewports.sagittal, 'sagittal');
-  updateCrosshairForViewport(mprState.viewports.coronal, 'coronal');
+  updateCrosshairForViewport(mprState.viewports.axial, "axial");
+  updateCrosshairForViewport(mprState.viewports.sagittal, "sagittal");
+  updateCrosshairForViewport(mprState.viewports.coronal, "coronal");
 }
 
-// Fixed crosshair positioning
+// FIXED: Crosshair positioning with proper coordinate mapping
 function updateCrosshairForViewport(viewport, plane) {
   if (!viewport) return;
 
   // Remove existing crosshairs
-  const existingCrosshairs = viewport.querySelectorAll('.mpr-crosshair');
-  existingCrosshairs.forEach(el => el.remove());
+  const existingCrosshairs = viewport.querySelectorAll(".mpr-crosshair");
+  existingCrosshairs.forEach((el) => el.remove());
 
-  // Create new crosshairs
-  const crosshairContainer = document.createElement('div');
-  crosshairContainer.className = 'mpr-crosshair';
+  // Create new crosshair container
+  const crosshairContainer = document.createElement("div");
+  crosshairContainer.className = "mpr-crosshair";
   crosshairContainer.style.cssText = `
     position: absolute;
     top: 0;
@@ -576,59 +969,71 @@ function updateCrosshairForViewport(viewport, plane) {
     z-index: 10;
   `;
 
-  const hLine = document.createElement('div');
-  const vLine = document.createElement('div');
-  
+  const hLine = document.createElement("div");
+  const vLine = document.createElement("div");
+
   const crosshairStyle = `
     position: absolute;
     background: #00ff00;
     box-shadow: 0 0 3px rgba(0, 255, 0, 0.8), inset 0 0 3px rgba(0, 255, 0, 0.4);
-    opacity: 0.8;
+    opacity: 0.9;
   `;
-  
-  hLine.style.cssText = crosshairStyle + `
+
+  hLine.style.cssText =
+    crosshairStyle +
+    `
     height: 1px;
     width: 100%;
     left: 0;
   `;
-  
-  vLine.style.cssText = crosshairStyle + `
+
+  vLine.style.cssText =
+    crosshairStyle +
+    `
     width: 1px;
     height: 100%;
     top: 0;
   `;
 
-  // Position crosshairs based on current position and plane
+  // FIXED: Position crosshairs based on current position and plane
   const { x, y, z } = mprState.crosshairPosition;
-  
+
   switch (plane) {
-    case 'axial':
+    case "axial":
+      // Axial: X-Y plane
       hLine.style.top = `${y * 100}%`;
       vLine.style.left = `${x * 100}%`;
       break;
-    case 'sagittal':
-      hLine.style.top = `${z * 100}%`;
-      vLine.style.left = `${y * 100}%`;
+    case "sagittal":
+      // Sagittal: Y-Z plane (from right side view)
+      hLine.style.top = `${(1.0 - z) * 100}%`; // Z flipped (superior at top)
+      vLine.style.left = `${y * 100}%`; // Y normal (anterior-posterior)
       break;
-    case 'coronal':
-      hLine.style.top = `${z * 100}%`;
-      vLine.style.left = `${x * 100}%`;
+    case "coronal":
+      // Coronal: X-Z plane (from front view)
+      hLine.style.top = `${(1.0 - z) * 100}%`; // Z flipped (superior at top)
+      vLine.style.left = `${x * 100}%`; // X normal (left-right)
       break;
   }
 
   crosshairContainer.appendChild(hLine);
   crosshairContainer.appendChild(vLine);
-  
+
   // Ensure viewport has relative positioning
-  if (viewport.style.position !== 'relative') {
-    viewport.style.position = 'relative';
+  if (viewport.style.position !== "relative") {
+    viewport.style.position = "relative";
   }
   viewport.appendChild(crosshairContainer);
 }
 
 // Enhanced viewport labeling
 function addViewportLabel(viewport, label, color = "#00ff00") {
-  const labelEl = document.createElement('div');
+  // Remove existing labels
+  const existingLabels = viewport.querySelectorAll(".mpr-viewport-label");
+  existingLabels.forEach((el) => el.remove());
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "mpr-viewport-label";
   labelEl.textContent = label;
   labelEl.style.cssText = `
     position: absolute;
@@ -644,110 +1049,264 @@ function addViewportLabel(viewport, label, color = "#00ff00") {
     pointer-events: none;
     border: 1px solid ${color};
     font-family: monospace;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
   `;
-  
-  if (viewport.style.position !== 'relative') {
-    viewport.style.position = 'relative';
+
+  if (viewport.style.position !== "relative") {
+    viewport.style.position = "relative";
   }
   viewport.appendChild(labelEl);
 }
 
-// Enhanced deactivation with proper cleanup
-function deactivateMPR() {
+// Enhanced MPR controls setup
+function setupMPRControls() {
+  const resetBtn = document.getElementById("mprResetBtn");
+  const syncBtn = document.getElementById("mprSyncBtn");
+  const exitBtn = document.getElementById("mprExitBtn");
+
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
+      if (mprState.isActive) {
+        renderMPRViews().catch((err) => {
+          console.error("Error resetting MPR:", err);
+        });
+      }
+    };
+  }
+
+  if (syncBtn) {
+    syncBtn.onclick = () => {
+      // Synchronize window/level across all MPR views
+      synchronizeWindowLevel();
+    };
+  }
+
+  if (exitBtn) {
+    exitBtn.onclick = () => {
+      deactivateMPR();
+    };
+  }
+}
+
+// Synchronize window/level across MPR viewports
+function synchronizeWindowLevel() {
+  if (!mprState.isActive) return;
+
+  try {
+    // Get viewport from axial (reference)
+    const axialViewport = mprState.viewports.axial;
+    if (!axialViewport) return;
+
+    const viewport = cornerstone.getViewport(axialViewport);
+    if (!viewport || !viewport.voi) return;
+
+    const windowCenter = viewport.voi.windowCenter;
+    const windowWidth = viewport.voi.windowWidth;
+
+    // Apply to sagittal and coronal viewports
+    [mprState.viewports.sagittal, mprState.viewports.coronal].forEach((vp) => {
+      if (
+        vp &&
+        cornerstone.getEnabledElements().some((e) => e.element === vp)
+      ) {
+        try {
+          const currentViewport = cornerstone.getViewport(vp);
+          currentViewport.voi.windowCenter = windowCenter;
+          currentViewport.voi.windowWidth = windowWidth;
+          cornerstone.setViewport(vp, currentViewport);
+        } catch (e) {
+          console.warn("Error syncing viewport:", e);
+        }
+      }
+    });
+
+    showSuccess("Window/Level synchronized");
+  } catch (error) {
+    console.error("Error synchronizing window/level:", error);
+  }
+}
+
+// Comprehensive cleanup function for MPR
+async function cleanupMPR() {
+  if (!mprState.isActive && !mprState.isInitialized) return;
+
+  console.log("Cleaning up MPR state...");
+
+  try {
+    // Stop any ongoing operations
+    clearTimeout(mprState._keyboardUpdateTimeout);
+
+    // Clean up viewports more thoroughly
+    if (mprState.viewports) {
+      for (const [plane, viewport] of Object.entries(mprState.viewports)) {
+        if (viewport) {
+          await cleanupViewport(viewport);
+        }
+      }
+    }
+
+    // Clear all cached data
+    mprState.cachedImages.sagittal.clear();
+    mprState.cachedImages.coronal.clear();
+
+    // Reset state completely
+    mprState.isActive = false;
+    mprState.isInitialized = false;
+    mprState.volumeData = null;
+    mprState.imageData = { axial: [], sagittal: [], coronal: [] };
+    mprState.viewports = { axial: null, sagittal: null, coronal: null };
+    mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
+    mprState.currentSlices = { axial: 0, sagittal: 0, coronal: 0 };
+    mprState.dimensions = null;
+    mprState.spacing = null;
+
+    // Force garbage collection
+    if (window.gc) {
+      window.gc();
+    }
+
+    console.log("MPR cleanup completed");
+  } catch (error) {
+    console.error("Error during MPR cleanup:", error);
+  }
+}
+
+// Enhanced deactivation with thorough cleanup
+async function deactivateMPR() {
   const container = document.getElementById("mprContainer");
   const normalViewport = document.getElementById("viewportContainer");
   const dicomImage = document.getElementById("dicomImage");
 
-  // Hide MPR container
-  if (container) container.style.display = "none";
+  showLoading(true, "Exiting MPR mode...");
 
-  // Show normal view
-  if (normalViewport) normalViewport.style.display = "block";
-  if (dicomImage) dicomImage.style.display = "block";
+  try {
+    // Perform comprehensive cleanup
+    await cleanupMPR();
 
-  // Clean up event listeners
-  Object.values(mprState.viewports).forEach(viewport => {
-    if (viewport && viewport._mprClickHandler) {
-      viewport.removeEventListener('click', viewport._mprClickHandler);
-      viewport._mprClickHandler = null;
-    }
-  });
+    // Hide MPR container
+    if (container) container.style.display = "none";
 
-  // Disable cornerstone on MPR viewports
-  Object.values(mprState.viewports).forEach(viewport => {
-    if (viewport) {
-      try {
-        // Clear content first
-        const crosshairs = viewport.querySelectorAll('.mpr-crosshair');
-        crosshairs.forEach(el => el.remove());
-        
-        // Disable cornerstone
-        if (cornerstone.getEnabledElements().some(e => e.element === viewport)) {
-          cornerstone.disable(viewport);
+    // Show normal view
+    if (normalViewport) normalViewport.style.display = "block";
+    if (dicomImage) dicomImage.style.display = "block";
+
+    // Restore the current image in normal view if available
+    if (
+      currentSeriesId &&
+      allSeries[currentSeriesId] &&
+      currentImageIndex >= 0
+    ) {
+      const series = allSeries[currentSeriesId];
+      if (series.images[currentImageIndex]) {
+        // Ensure cornerstone is enabled on the main viewport
+        const mainViewport = getActiveElement();
+        if (mainViewport) {
+          ensureEnabled(mainViewport);
+
+          try {
+            const imageId = series.images[currentImageIndex].imageId;
+            const image = await cornerstone.loadAndCacheImage(imageId);
+            await cornerstone.displayImage(mainViewport, image);
+            setupToolsForViewport(mainViewport);
+            updateImageInfo();
+          } catch (err) {
+            console.error("Error restoring main viewport:", err);
+          }
         }
-      } catch (e) {
-        console.warn("Error during MPR cleanup:", e);
       }
     }
-  });
 
-  // Reset MPR state
-  mprState.isActive = false;
-  mprState.volumeData = null;
-  mprState.imageData = { axial: [], sagittal: [], coronal: [] };
-  mprState.viewports = { axial: null, sagittal: null, coronal: null };
-  mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-  mprState.currentSlices = { axial: 0, sagittal: 0, coronal: 0 };
-
-  updateStatus("MPR mode deactivated");
+    updateStatus("Returned to normal viewing mode");
+    showSuccess("MPR mode deactivated");
+  } catch (error) {
+    console.error("Error during MPR deactivation:", error);
+    showError("Error exiting MPR mode: " + error.message);
+  } finally {
+    showLoading(false);
+  }
 }
 
-// Enhanced keyboard controls
+// Enhanced keyboard controls with better responsiveness
 document.addEventListener("keydown", function (e) {
   if (!mprState.isActive) return;
 
-  const step = 0.02; // 2% step for crosshair movement
+  const step = 0.01; // Smaller step for smoother movement (1% instead of 2%)
+  let shouldUpdate = false;
 
-  switch (e.keyCode) {
-    case 87: // W - move up
+  switch (e.key.toLowerCase()) {
+    case "w": // W - move up (decrease Y)
       e.preventDefault();
-      mprState.crosshairPosition.y = Math.max(0, mprState.crosshairPosition.y - step);
-      renderMPRViews();
+      mprState.crosshairPosition.y = Math.max(
+        0,
+        mprState.crosshairPosition.y - step
+      );
+      shouldUpdate = true;
       break;
-    case 83: // S - move down
+    case "s": // S - move down (increase Y)
       e.preventDefault();
-      mprState.crosshairPosition.y = Math.min(1, mprState.crosshairPosition.y + step);
-      renderMPRViews();
+      mprState.crosshairPosition.y = Math.min(
+        1,
+        mprState.crosshairPosition.y + step
+      );
+      shouldUpdate = true;
       break;
-    case 65: // A - move left
+    case "a": // A - move left (decrease X)
       e.preventDefault();
-      mprState.crosshairPosition.x = Math.max(0, mprState.crosshairPosition.x - step);
-      renderMPRViews();
+      mprState.crosshairPosition.x = Math.max(
+        0,
+        mprState.crosshairPosition.x - step
+      );
+      shouldUpdate = true;
       break;
-    case 68: // D - move right
+    case "d": // D - move right (increase X)
       e.preventDefault();
-      mprState.crosshairPosition.x = Math.min(1, mprState.crosshairPosition.x + step);
-      renderMPRViews();
+      mprState.crosshairPosition.x = Math.min(
+        1,
+        mprState.crosshairPosition.x + step
+      );
+      shouldUpdate = true;
       break;
-    case 81: // Q - move slice up
+    case "q": // Q - move slice up (decrease Z)
       e.preventDefault();
-      mprState.crosshairPosition.z = Math.max(0, mprState.crosshairPosition.z - step);
-      renderMPRViews();
+      mprState.crosshairPosition.z = Math.max(
+        0,
+        mprState.crosshairPosition.z - step
+      );
+      shouldUpdate = true;
       break;
-    case 69: // E - move slice down
+    case "e": // E - move slice down (increase Z)
       e.preventDefault();
-      mprState.crosshairPosition.z = Math.min(1, mprState.crosshairPosition.z + step);
-      renderMPRViews();
+      mprState.crosshairPosition.z = Math.min(
+        1,
+        mprState.crosshairPosition.z + step
+      );
+      shouldUpdate = true;
       break;
-    case 27: // Escape - exit MPR
+    case "escape": // Escape - exit MPR
       e.preventDefault();
       deactivateMPR();
       break;
-    case 67: // C - center crosshair
+    case "c": // C - center crosshair
       e.preventDefault();
       mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-      renderMPRViews();
+      shouldUpdate = true;
       break;
+    case "r": // R - reset crosshair (alternative to C)
+      e.preventDefault();
+      mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
+      shouldUpdate = true;
+      break;
+  }
+
+  if (shouldUpdate) {
+    // Debounced update to prevent too many renders
+    clearTimeout(mprState._keyboardUpdateTimeout);
+    mprState._keyboardUpdateTimeout = setTimeout(() => {
+      renderMPRViews().catch((error) => {
+        console.error("Error updating MPR views from keyboard:", error);
+      });
+    }, 16); // ~60fps
   }
 });
 
@@ -756,25 +1315,48 @@ function setupMPRTools() {
   if (!mprState.isActive) return;
 
   Object.entries(mprState.viewports).forEach(([plane, viewport]) => {
-    if (viewport && cornerstone.getEnabledElements().some(e => e.element === viewport)) {
+    if (
+      viewport &&
+      cornerstone.getEnabledElements().some((e) => e.element === viewport)
+    ) {
       try {
+        // Ensure tools are available
+        if (typeof cornerstoneTools === "undefined") return;
+
         // Setup basic tools for each viewport
         cornerstoneTools.addTool(cornerstoneTools.WwwcTool);
         cornerstoneTools.addTool(cornerstoneTools.ZoomTool);
         cornerstoneTools.addTool(cornerstoneTools.PanTool);
-        
-        cornerstoneTools.setToolActive("Wwwc", { mouseButtonMask: 1 }, viewport);
-        cornerstoneTools.setToolActive("Zoom", { mouseButtonMask: 2 }, viewport);
+
+        // Set active tools with different mouse buttons
+        cornerstoneTools.setToolActive(
+          "Wwwc",
+          { mouseButtonMask: 1 },
+          viewport
+        );
+        cornerstoneTools.setToolActive(
+          "Zoom",
+          { mouseButtonMask: 2 },
+          viewport
+        );
         cornerstoneTools.setToolActive("Pan", { mouseButtonMask: 4 }, viewport);
 
-        // Add viewport change listener for synchronization
-        viewport.addEventListener('cornerstoneimagerendered', (e) => {
+        // Add viewport change listener for real-time updates
+        const renderHandler = (e) => {
           const eventData = e.detail;
-          if (eventData && eventData.viewport && eventData.viewport.voi) {
-            // Optional: synchronize window/level across viewports
-            // synchronizeWindowLevel(viewport, eventData.viewport.voi.windowCenter, eventData.viewport.voi.windowWidth);
+          if (eventData && eventData.viewport) {
+            // Optional: Update other viewports when window/level changes
+            // This can be enabled for real-time synchronization
           }
-        });
+        };
+
+        viewport.addEventListener("cornerstoneimagerendered", renderHandler);
+
+        // Store handler for cleanup
+        if (!viewport._mprRenderHandlers) {
+          viewport._mprRenderHandlers = [];
+        }
+        viewport._mprRenderHandlers.push(renderHandler);
       } catch (error) {
         console.warn(`Error setting up tools for ${plane} viewport:`, error);
       }
@@ -782,39 +1364,70 @@ function setupMPRTools() {
   });
 }
 
-// Add button event listeners
-document.addEventListener('DOMContentLoaded', function() {
-  const mprBtn = document.getElementById("mprTool");
-  const exitBtn = document.getElementById("mprExitBtn");
-  const resetBtn = document.getElementById("mprResetBtn");
+// Enhanced MPR button handler
+const mprBtn = document.getElementById("mprTool");
+if (mprBtn) {
+  mprBtn.addEventListener("click", async () => {
+    if (mprState.isActive) {
+      await deactivateMPR();
+      mprBtn.classList.remove("active");
+    } else {
+      await activateMPR();
+      mprBtn.classList.add("active");
+    }
+  });
+}
 
-  
-  if (mprBtn) {
-    mprBtn.addEventListener("click", () => activateMPR());
-  }
-  
-  if (exitBtn) {
-    exitBtn.addEventListener("click", () => deactivateMPR());
-  }
-  
-
-  
-  if (resetBtn) {
-    resetBtn.addEventListener("click", () => {
-      mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-      if (mprState.isActive) {
-        renderMPRViews();
-      }
-    });
+// Window resize handler for MPR viewports
+window.addEventListener("resize", () => {
+  if (mprState.isActive) {
+    setTimeout(() => {
+      Object.values(mprState.viewports).forEach((viewport) => {
+        if (viewport && cornerstone.getEnabledElements().some((e) => e.element === viewport)) {
+          try {
+            cornerstone.resize(viewport, true);
+          } catch (e) {
+            console.warn("Resize failed:", e);
+          }
+        }
+      });
+    }, 100);
   }
 });
 
+// Debug function to check MPR state
+window.debugMPRState = function() {
+  console.log("=== MPR Debug Information ===");
+  console.log("Current Series ID:", currentSeriesId);
+  console.log("All Series Keys:", Object.keys(allSeries));
+  
+  if (currentSeriesId && allSeries[currentSeriesId]) {
+    const series = allSeries[currentSeriesId];
+    console.log("Current Series:", {
+      seriesDescription: series.seriesDescription,
+      imageCount: series.images ? series.images.length : 0,
+      firstImageId: series.images && series.images[0] ? series.images[0].imageId : "none"
+    });
+  }
+  
+  console.log("MPR State:", {
+    isActive: mprState.isActive,
+    isInitialized: mprState.isInitialized,
+    hasVolumeData: !!mprState.volumeData,
+    volumeDataLength: mprState.volumeData ? mprState.volumeData.length : 0,
+    dimensions: mprState.dimensions,
+    spacing: mprState.spacing
+  });
+  console.log("=== End Debug Info ===");
+};
 
-
+// Expose MPR functions to global scope
+window.activateMPR = activateMPR;
+window.deactivateMPR = deactivateMPR;
+window.mprState = mprState;
 
 // Load PACS data
 async function loadPacsData(folderId) {
-  //console.log('Loading PACS data for folder ID:', folderId);
   showLoading(true, "Loading PACS study...");
 
   try {
@@ -825,34 +1438,32 @@ async function loadPacsData(folderId) {
       throw new Error("PACS server URL or study ID not found in session");
     }
 
-    // console.log("Loading PACS study:", studyId, "from", pacsServerUrl);
-
     // Get authentication headers
     const headers = {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     };
 
     // Add basic auth if credentials exist
-    const username = sessionStorage.getItem('pacsUsername');
-    const password = sessionStorage.getItem('pacsPassword');
-    // const username = "harsh";
-    // const password = '12345';
+    const username = sessionStorage.getItem("pacsUsername");
+    const password = sessionStorage.getItem("pacsPassword");
     if (username && password) {
-      headers['Authorization'] = 'Basic ' + btoa(username + ':' + password);
+      headers["Authorization"] = "Basic " + btoa(username + ":" + password);
     }
 
     // Get series list
-    const seriesRes = await fetch(`${pacsServerUrl}/studies/${studyId}/series`, {
-      method: 'GET',
-      headers: headers
-    });
-    
+    const seriesRes = await fetch(
+      `${pacsServerUrl}/studies/${studyId}/series`,
+      {
+        method: "GET",
+        headers: headers,
+      }
+    );
+
     if (!seriesRes.ok) {
       throw new Error(`Failed to fetch series: ${seriesRes.status}`);
     }
 
     const seriesList = await seriesRes.json();
-    // console.log("Series List:", seriesList);
 
     if (!seriesList || seriesList.length === 0) {
       throw new Error("No series found in study");
@@ -862,29 +1473,29 @@ async function loadPacsData(folderId) {
     let totalInstances = 0;
 
     // Process each series
-    
-      for (let i = 0; i < seriesList.length; i++) {
-  const seriesData = seriesList[i];
-  const seriesId = seriesData.ID;
+    for (let i = 0; i < seriesList.length; i++) {
+      const seriesData = seriesList[i];
+      const seriesId = seriesData.ID;
       updateStatus(`Loading series ${i + 1}/${seriesList.length}...`);
-      
+
       try {
         // Get series details
-        // const seriesDetailsRes = await fetch(`${pacsServerUrl}/series/${seriesId}`, {
-      //  http://localhost:5000/orthanc/studies/f5fb48d5-af3afd53-088f1223-6ffab861-8d76e2be
-        const seriesDetailsRes = await fetch(`${pacsServerUrl}/studies/${studyId}`, {
-          headers: headers
-        });
+        const seriesDetailsRes = await fetch(
+          `${pacsServerUrl}/studies/${studyId}`,
+          {
+            headers: headers,
+          }
+        );
         const seriesDetails = await seriesDetailsRes.json();
-        // console.log(seriesDetails);
-        
+
         // Get instances in this series
-        const instancesRes = await fetch(`${pacsServerUrl}/series/${seriesId}/instances`, {
-          headers: headers
-        });
+        const instancesRes = await fetch(
+          `${pacsServerUrl}/series/${seriesId}/instances`,
+          {
+            headers: headers,
+          }
+        );
         const instances = await instancesRes.json();
-        
-        // console.log(`Series ${seriesId} has ${instances.length} instances`);
 
         if (instances.length === 0) {
           console.warn(`No instances found in series ${seriesId}`);
@@ -895,10 +1506,14 @@ async function loadPacsData(folderId) {
         tempSeries[seriesKey] = {
           seriesInstanceUID: seriesId,
           studyInstanceUID: studyId,
-          patientName: seriesDetails.PatientMainDicomTags?.PatientName || "Unknown Patient",
-          studyDescription: seriesDetails.MainDicomTags?.StudyDescription || "PACS Study",
-          seriesDescription: seriesDetails.MainDicomTags?.SeriesDescription || `Series ${i + 1}`,
-          seriesNumber: seriesDetails.MainDicomTags?.SeriesNumber || (i + 1),
+          patientName:
+            seriesDetails.PatientMainDicomTags?.PatientName ||
+            "Unknown Patient",
+          studyDescription:
+            seriesDetails.MainDicomTags?.StudyDescription || "PACS Study",
+          seriesDescription:
+            seriesDetails.MainDicomTags?.SeriesDescription || `Series ${i + 1}`,
+          seriesNumber: seriesDetails.MainDicomTags?.SeriesNumber || i + 1,
           studyDate: formatDate(seriesDetails.MainDicomTags?.StudyDate || ""),
           studyTime: formatTime(seriesDetails.MainDicomTags?.StudyTime || ""),
           modality: seriesDetails.MainDicomTags?.Modality || "UN",
@@ -906,27 +1521,38 @@ async function loadPacsData(folderId) {
         };
 
         // Process each instance
-       
-    for (let j = 0; j < instances.length; j++) {
-    const instanceData = instances[j];
-    const instanceId = instanceData.ID || instanceData.id; // Extract the actual ID
-    
-    updateStatus(`Loading series ${i + 1}/${seriesList.length}, image ${j + 1}/${instances.length}...`);
-    
+        for (let j = 0; j < instances.length; j++) {
+          const instanceData = instances[j];
+          const instanceId = instanceData.ID || instanceData.id;
+
+          updateStatus(
+            `Loading series ${i + 1}/${seriesList.length}, image ${j + 1}/${
+              instances.length
+            }...`
+          );
+
           try {
             // Get DICOM file
-            const fileRes = await fetch(`${pacsServerUrl}/instances/${instanceId}/file`, {
-              headers: headers
-            });
-            
+            const fileRes = await fetch(
+              `${pacsServerUrl}/instances/${instanceId}/file`,
+              {
+                headers: headers,
+              }
+            );
+
             if (!fileRes.ok) {
-              console.warn(`Failed to fetch instance ${instanceId}: ${fileRes.status}`);
+              console.warn(
+                `Failed to fetch instance ${instanceId}: ${fileRes.status}`
+              );
               continue;
             }
 
             const dicomArrayBuffer = await fileRes.arrayBuffer();
-            const blob = new Blob([dicomArrayBuffer], { type: "application/dicom" });
-            const imageId = cornerstoneWADOImageLoader.wadouri.fileManager.add(blob);
+            const blob = new Blob([dicomArrayBuffer], {
+              type: "application/dicom",
+            });
+            const imageId =
+              cornerstoneWADOImageLoader.wadouri.fileManager.add(blob);
 
             tempSeries[seriesKey].images.push({
               imageId: imageId,
@@ -942,20 +1568,23 @@ async function loadPacsData(folderId) {
 
             totalInstances++;
           } catch (instanceError) {
-            console.error(`Error loading instance ${instanceId}:`, instanceError);
+            console.error(
+              `Error loading instance ${instanceId}:`,
+              instanceError
+            );
           }
         }
 
         // Sort images by instance number
-        tempSeries[seriesKey].images.sort((a, b) => a.instanceNumber - b.instanceNumber);
-
+        tempSeries[seriesKey].images.sort(
+          (a, b) => a.instanceNumber - b.instanceNumber
+        );
       } catch (seriesError) {
         console.error(`Error loading series ${seriesId}:`, seriesError);
       }
     }
 
     finalizeSeries(tempSeries, totalInstances);
-
   } catch (error) {
     console.error("Error loading PACS study:", error);
     showError("Failed to load PACS study: " + error.message);
@@ -987,8 +1616,6 @@ function setupEventListeners() {
 
   // Progress bar interactions
   if (progressBar) progressBar.addEventListener("click", handleProgressClick);
-
- 
 
   // Dropdown functionality
   const annotationTool = document.getElementById("annotationTool");
@@ -1048,7 +1675,6 @@ function setupEventListeners() {
   }
 }
 
-
 // Initialize IndexedDB connection
 function initViewerDB() {
   return new Promise((resolve, reject) => {
@@ -1066,13 +1692,13 @@ function initViewerDB() {
 
 // Load DICOM data from IndexedDB - MAIN FUNCTION
 async function loadDicomFromIndexedDB(folderId) {
-  console.log('Loading DICOM data from IndexedDB for folder ID:', folderId);
+  console.log("Loading DICOM data from IndexedDB for folder ID:", folderId);
 
   showLoading(true, "Loading DICOM data from IndexedDB...");
 
   try {
     const db = await initViewerDB();
-    
+
     // First get folder metadata
     const folderData = await getFolderFromIndexedDB(db, folderId);
     if (!folderData) {
@@ -1089,12 +1715,11 @@ async function loadDicomFromIndexedDB(folderId) {
 
     // Process the files
     await processIndexedDBDicomFiles(folderData, files);
-    
   } catch (error) {
-    console.error('Error loading DICOM data from IndexedDB:', error);
-    
+    console.error("Error loading DICOM data from IndexedDB:", error);
+
     // Fallback to localStorage method
-    console.log('Falling back to localStorage method...');
+    console.log("Falling back to localStorage method...");
     loadDicomFromStorage(folderId);
   }
 }
@@ -1104,13 +1729,13 @@ function getFolderFromIndexedDB(db, folderId) {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction("folders", "readonly");
     const store = transaction.objectStore("folders");
-    
+
     const request = store.get(parseInt(folderId));
-    
+
     request.onsuccess = () => {
       resolve(request.result);
     };
-    
+
     request.onerror = (e) => {
       reject(e.target.error);
     };
@@ -1152,16 +1777,16 @@ async function processIndexedDBDicomFiles(folderData, files) {
 
   for (let i = 0; i < files.length; i++) {
     const fileRecord = files[i];
-    
+
     try {
       // Get the actual file data
       let dicomFile = fileRecord.data;
-      
+
       // If data is not a File object, try to convert it
       if (!(dicomFile instanceof File)) {
         if (dicomFile instanceof ArrayBuffer) {
-          dicomFile = new File([dicomFile], fileRecord.name, { 
-            type: fileRecord.type || "application/dicom" 
+          dicomFile = new File([dicomFile], fileRecord.name, {
+            type: fileRecord.type || "application/dicom",
           });
         } else {
           console.warn("Unsupported file data type for:", fileRecord.name);
@@ -1171,7 +1796,8 @@ async function processIndexedDBDicomFiles(folderData, files) {
       }
 
       // Create cornerstone image ID
-      const imageId = cornerstoneWADOImageLoader.wadouri.fileManager.add(dicomFile);
+      const imageId =
+        cornerstoneWADOImageLoader.wadouri.fileManager.add(dicomFile);
 
       // Create series grouping
       const seriesKey = "series_" + folderData.id;
@@ -1193,7 +1819,7 @@ async function processIndexedDBDicomFiles(folderData, files) {
 
       tempSeries[seriesKey].images.push({
         imageId: imageId,
-        instanceNumber: i + 1,
+        instanceNumber:i + 1,
         fileName: fileRecord.name,
         patientName: folderData.patientName || "Unknown Patient",
         studyDescription: folderData.name || "Local Study",
@@ -1209,10 +1835,9 @@ async function processIndexedDBDicomFiles(folderData, files) {
       const progress = (processedFiles / files.length) * 100;
       updateProgress(progress);
 
-      if (typeof loadingText !== 'undefined' && loadingText) {
+      if (typeof loadingText !== "undefined" && loadingText) {
         loadingText.textContent = `Loading images... (${processedFiles}/${files.length})`;
       }
-
     } catch (error) {
       console.error("Error processing file:", fileRecord.name, error);
       processedFiles++;
@@ -1229,7 +1854,7 @@ async function processIndexedDBDicomFiles(folderData, files) {
 
 // Load DICOM data from localStorage - MAIN FUNCTION
 function loadDicomFromStorage(folderId) {
-  console.log('Loading DICOM data for folder ID:', folderId);
+  console.log("Loading DICOM data for folder ID:", folderId);
 
   showLoading(true, "Loading DICOM data...");
 
@@ -1242,7 +1867,6 @@ function loadDicomFromStorage(folderId) {
     const folders = JSON.parse(saved);
     const folder = folders.find((f) => f.id == folderId);
     console.log(folders);
-    
 
     if (!folder) {
       throw new Error("Selected folder not found");
@@ -1263,7 +1887,7 @@ function loadDicomFromStorage(folderId) {
     // Process the files
     processStoredDicomFiles(folder);
   } catch (error) {
-    console.error('Error loading DICOM data:', error);
+    console.error("Error loading DICOM data:", error);
     showError(error.message);
     showLoading(false);
   }
@@ -1285,8 +1909,6 @@ function base64ToFile(base64String, fileName) {
 
 // Process DICOM files from localStorage (legacy support)
 function processStoredDicomFiles(folder) {
-  //console.log("Processing stored DICOM files from localStorage...");
-
   const tempSeries = {};
   let processedFiles = 0;
   let validFiles = 0;
@@ -1301,7 +1923,8 @@ function processStoredDicomFiles(folder) {
     try {
       // Convert base64 back to file
       const dicomFile = base64ToFile(fileData.base64, fileData.name);
-      const imageId = cornerstoneWADOImageLoader.wadouri.fileManager.add(dicomFile);
+      const imageId =
+        cornerstoneWADOImageLoader.wadouri.fileManager.add(dicomFile);
 
       // Create a fake series (since we don't have DICOM parsing)
       const seriesKey = "series_" + folder.id;
@@ -1339,7 +1962,7 @@ function processStoredDicomFiles(folder) {
       const progress = (processedFiles / folder.files.length) * 100;
       updateProgress(progress);
 
-      if (typeof loadingText !== 'undefined' && loadingText) {
+      if (typeof loadingText !== "undefined" && loadingText) {
         loadingText.textContent = `Loading images... (${processedFiles}/${folder.files.length})`;
       }
     } catch (error) {
@@ -1356,9 +1979,6 @@ function processStoredDicomFiles(folder) {
 
 // FIXED: Finalize series after processing
 function finalizeSeries(tempSeries, validFiles) {
-  //console.log("Finalizing series with", validFiles, "valid files");
-  // console.log("TempSeries data:", tempSeries);
-
   if (validFiles === 0) {
     showError("No valid DICOM files found!");
     showLoading(false);
@@ -1367,13 +1987,11 @@ function finalizeSeries(tempSeries, validFiles) {
 
   // Convert tempSeries to the correct format that the UI expects
   allSeries = {}; // Reset the global allSeries object
-  
+
   // Convert each series in tempSeries to the expected format
-  Object.keys(tempSeries).forEach(key => {
+  Object.keys(tempSeries).forEach((key) => {
     allSeries[key] = tempSeries[key];
   });
-
-  //console.log("Final allSeries:", allSeries);
 
   // Create the series UI - this is the key fix!
   createSeriesUI();
@@ -1381,12 +1999,10 @@ function finalizeSeries(tempSeries, validFiles) {
   // Load first image if available
   const firstSeriesKey = Object.keys(allSeries)[0];
   if (firstSeriesKey && allSeries[firstSeriesKey].images.length > 0) {
-   // console.log("Loading first series:", firstSeriesKey);
-    
     // Set the current series
     currentSeriesId = firstSeriesKey;
     currentImageIndex = 0;
-    
+
     // Load the first image
     selectSeries(firstSeriesKey, 0);
   } else {
@@ -1394,15 +2010,15 @@ function finalizeSeries(tempSeries, validFiles) {
   }
 
   showLoading(false);
-  
+
   // Update status
-  updateStatus(`Loaded ${Object.keys(allSeries).length} series with ${validFiles} images`);
+  updateStatus(
+    `Loaded ${Object.keys(allSeries).length} series with ${validFiles} images`
+  );
 }
 
 // FIXED: Create series UI - This function was missing proper implementation
 function createSeriesUI() {
-  //console.log("Creating series UI...", allSeries);
-  
   if (!seriesContainer) {
     console.error("seriesContainer not found");
     return;
@@ -1424,8 +2040,6 @@ function createSeriesUI() {
 
   // Create series items
   Object.entries(allSeries).forEach(([seriesKey, series]) => {
-    // console.log("Creating UI for series:", seriesKey, series);
-
     const seriesItem = document.createElement("div");
     seriesItem.className = "series-item";
     seriesItem.id = `series_${seriesKey}`;
@@ -1438,10 +2052,12 @@ function createSeriesUI() {
     seriesHeader.innerHTML = `
       <div>
         <div class="series-title" style="font-weight: bold; margin-bottom: 4px;">
-          ${series.seriesDescription || 'Unnamed Series'}
+          ${series.seriesDescription || "Unnamed Series"}
         </div>
         <div class="series-info" style="font-size: 0.85em; color: #666;">
-          ${series.modality || 'UN'} • ${series.patientName || 'Unknown Patient'}
+          ${series.modality || "UN"} • ${
+      series.patientName || "Unknown Patient"
+    }
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 10px;">
@@ -1483,27 +2099,28 @@ function createSeriesUI() {
           justify-content: center;
           transition: all 0.2s;
         `;
-        
+
         thumbnail.onclick = (e) => {
           e.stopPropagation();
           selectSeries(seriesKey, index);
         };
-        
+
         thumbnail.onmouseenter = () => {
-          thumbnail.style.borderColor = '#007bff';
-          thumbnail.style.transform = 'scale(1.05)';
+          thumbnail.style.borderColor = "#007bff";
+          thumbnail.style.transform = "scale(1.05)";
         };
-        
+
         thumbnail.onmouseleave = () => {
-          if (!thumbnail.classList.contains('selected')) {
-            thumbnail.style.borderColor = '#ddd';
+          if (!thumbnail.classList.contains("selected")) {
+            thumbnail.style.borderColor = "#ddd";
           }
-          thumbnail.style.transform = 'scale(1)';
+          thumbnail.style.transform = "scale(1)";
         };
 
         const loadingDiv = document.createElement("div");
         loadingDiv.className = "thumbnail-loading";
-        loadingDiv.innerHTML = '<i class="fas fa-spinner fa-spin" style="color: #007bff;"></i>';
+        loadingDiv.innerHTML =
+          '<i class="fas fa-spinner fa-spin" style="color: #007bff;"></i>';
         thumbnail.appendChild(loadingDiv);
 
         const info = document.createElement("div");
@@ -1520,7 +2137,7 @@ function createSeriesUI() {
         `;
         info.textContent = `${index + 1}`;
         thumbnail.appendChild(info);
-        
+
         thumbnailsGrid.appendChild(thumbnail);
 
         // Load thumbnail with delay to prevent overwhelming
@@ -1540,8 +2157,6 @@ function createSeriesUI() {
     seriesItem.appendChild(thumbnailsGrid);
     seriesContainer.appendChild(seriesItem);
   });
-
-//  console.log("Series UI created successfully");
 }
 
 // Load thumbnail image
@@ -1592,43 +2207,49 @@ function loadThumbnailImage(imageId, thumbnailContainer, loadingDiv, index) {
       }, 50);
     })
     .catch((error) => {
-      // console.error(`Thumbnail load error for ${imageId}:`, error);
       if (loadingDiv) {
-        loadingDiv.innerHTML = '<i class="fas fa-exclamation-triangle" style="color: #dc3545;"></i>';
+        loadingDiv.innerHTML =
+          '<i class="fas fa-exclamation-triangle" style="color: #dc3545;"></i>';
       }
     });
 }
+
 // Toggle series expansion function
 function toggleSeries(seriesKey) {
-  console.log('Toggling series:', seriesKey); // Better debugging than debugger
-  
+  console.log("Toggling series:", seriesKey);
+
   const seriesItem = document.getElementById(`series_${seriesKey}`);
-  
+
   if (!seriesItem) {
     console.error(`Series item with ID 'series_${seriesKey}' not found`);
     return;
   }
-  
+
   // Toggle the collapsed state
   seriesItem.classList.toggle("series-collapsed");
-  
+
   // Rotate the chevron icon
-  const expandIcon = seriesItem.querySelector('.expand-icon');
+  const expandIcon = seriesItem.querySelector(".expand-icon");
   if (expandIcon) {
     const isCollapsed = seriesItem.classList.contains("series-collapsed");
-    expandIcon.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-    expandIcon.style.transition = 'transform 0.3s ease'; // Smooth animation
+    expandIcon.style.transform = isCollapsed
+      ? "rotate(-90deg)"
+      : "rotate(0deg)";
+    expandIcon.style.transition = "transform 0.3s ease";
   } else {
-    console.warn('Expand icon not found in series item');
+    console.warn("Expand icon not found in series item");
   }
 }
+
 // FIXED: Select series and image - This was the main issue!
 function selectSeries(seriesKey, imageIndex = 0) {
- // console.log("Selecting series:", seriesKey, "image:", imageIndex);
-
   const series = allSeries[seriesKey];
   if (!series || !series.images[imageIndex]) {
-    console.error("Series or image not found", { seriesKey, imageIndex, series });
+    console.error("Series or image not found", {
+      seriesKey,
+      imageIndex,
+      series,
+    });
     return;
   }
 
@@ -1646,27 +2267,22 @@ function selectSeries(seriesKey, imageIndex = 0) {
   ensureEnabled(el);
 
   const imageId = series.images[imageIndex].imageId;
-  // console.log("Loading image ID:", imageId);
 
   // Load and display the image
-  cornerstone.loadImage(imageId)
+  cornerstone
+    .loadImage(imageId)
     .then((image) => {
-     // console.log("Image loaded successfully, displaying...");
-      
       // Display the image
       cornerstone.displayImage(el, image);
-      
-      // console.log("Image displayed successfully");
-      
+
       // Setup tools and UI
       setupToolsForViewport(el);
       updateImageInfo();
       updateCineControls();
       showViewer();
-      
+
       // Update thumbnail selection
       updateThumbnailSelection(seriesKey, imageIndex);
-      
     })
     .catch((err) => {
       console.error("Error loading/displaying image:", err);
@@ -1677,19 +2293,19 @@ function selectSeries(seriesKey, imageIndex = 0) {
 // Update thumbnail selection UI
 function updateThumbnailSelection(seriesKey, imageIndex) {
   // Remove previous selection
-  document.querySelectorAll('.thumbnail.selected').forEach(thumb => {
-    thumb.classList.remove('selected');
-    thumb.style.borderColor = '#ddd';
+  document.querySelectorAll(".thumbnail.selected").forEach((thumb) => {
+    thumb.classList.remove("selected");
+    thumb.style.borderColor = "#ddd";
   });
-  
+
   // Add selection to current thumbnail
   const thumbnailsGrid = document.getElementById(`thumbnails_${seriesKey}`);
   if (thumbnailsGrid) {
-    const thumbnails = thumbnailsGrid.querySelectorAll('.thumbnail');
+    const thumbnails = thumbnailsGrid.querySelectorAll(".thumbnail");
     if (thumbnails[imageIndex]) {
-      thumbnails[imageIndex].classList.add('selected');
-      thumbnails[imageIndex].style.borderColor = '#007bff';
-      thumbnails[imageIndex].style.borderWidth = '3px';
+      thumbnails[imageIndex].classList.add("selected");
+      thumbnails[imageIndex].style.borderColor = "#007bff";
+      thumbnails[imageIndex].style.borderWidth = "3px";
     }
   }
 }
@@ -1706,7 +2322,6 @@ function updateImageInfo() {
 
   const series = allSeries[currentSeriesId];
   const currentImage = series.images[currentImageIndex];
-// console.log(series);
 
   const topLeft = document.getElementById("topLeft");
   const topRight = document.getElementById("topRight");
@@ -1722,16 +2337,25 @@ function updateImageInfo() {
   }
 
   if (bottomLeft) {
-    bottomLeft.innerHTML = `Series: ${series.seriesDescription}<br>Image: ${currentImageIndex + 1}/${series.images.length}`;
+    bottomLeft.innerHTML = `Series: ${series.seriesDescription}<br>Image: ${
+      currentImageIndex + 1
+    }/${series.images.length}`;
   }
 
   // Get viewport info from the active element
   const activeElement = getActiveElement();
-  if (activeElement && cornerstone.getEnabledElements().some((e) => e.element === activeElement)) {
+  if (
+    activeElement &&
+    cornerstone.getEnabledElements().some((e) => e.element === activeElement)
+  ) {
     try {
       const viewport = cornerstone.getViewport(activeElement);
       if (bottomRight) {
-        bottomRight.innerHTML = `WW/WC: ${Math.round(viewport.voi.windowWidth)}/${Math.round(viewport.voi.windowCenter)}<br>Zoom: ${viewport.scale.toFixed(1)}x`;
+        bottomRight.innerHTML = `WW/WC: ${Math.round(
+          viewport.voi.windowWidth
+        )}/${Math.round(
+          viewport.voi.windowCenter
+        )}<br>Zoom: ${viewport.scale.toFixed(1)}x`;
       }
     } catch (error) {
       console.warn("Could not get viewport info:", error);
@@ -1750,19 +2374,29 @@ function updateCineControls() {
   cineControls.style.display = "block";
 
   // Update progress
-  const progress = series.images.length > 1 ? (currentImageIndex / (series.images.length - 1)) * 100 : 0;
+  const progress =
+    series.images.length > 1
+      ? (currentImageIndex / (series.images.length - 1)) * 100
+      : 0;
   if (progressFill) progressFill.style.width = progress + "%";
   if (progressThumb) progressThumb.style.left = progress + "%";
 
   // Update time displays
-  if (currentTimeDisplay) currentTimeDisplay.textContent = `${currentImageIndex + 1} / ${series.images.length}`;
-  if (totalTimeDisplay) totalTimeDisplay.textContent = series.images.length.toString();
+  if (currentTimeDisplay)
+    currentTimeDisplay.textContent = `${currentImageIndex + 1} / ${
+      series.images.length
+    }`;
+  if (totalTimeDisplay)
+    totalTimeDisplay.textContent = series.images.length.toString();
 
   // Update button states
   if (firstBtn) firstBtn.disabled = currentImageIndex === 0;
   if (prevBtn) prevBtn.disabled = currentImageIndex === 0 && !isLooping;
-  if (nextBtn) nextBtn.disabled = currentImageIndex === series.images.length - 1 && !isLooping;
-  if (lastBtn) lastBtn.disabled = currentImageIndex === series.images.length - 1;
+  if (nextBtn)
+    nextBtn.disabled =
+      currentImageIndex === series.images.length - 1 && !isLooping;
+  if (lastBtn)
+    lastBtn.disabled = currentImageIndex === series.images.length - 1;
 
   // Show/hide controls based on series length
   const shouldShow = series.images.length > 1;
@@ -1854,7 +2488,9 @@ function toggleLoop() {
   isLooping = !isLooping;
   if (loopBtn) {
     loopBtn.style.opacity = isLooping ? "1" : "0.5";
-    loopBtn.style.background = isLooping ? "rgba(16, 185, 129, 0.9)" : "rgba(59, 130, 246, 0.9)";
+    loopBtn.style.background = isLooping
+      ? "rgba(16, 185, 129, 0.9)"
+      : "rgba(59, 130, 246, 0.9)";
   }
 }
 
@@ -1885,8 +2521,6 @@ function changeImage(direction) {
 
 // Progress bar event handlers
 function handleProgressClick(e) {
-  if (isDragging) return;
-
   const rect = progressBar.getBoundingClientRect();
   const clickX = e.clientX - rect.left;
   const percentage = Math.max(0, Math.min(1, clickX / rect.width));
@@ -1897,33 +2531,6 @@ function handleProgressClick(e) {
     goToImage(targetIndex);
   }
 }
-
-// let isDragging = false;
-
-// function startDrag(e) {
-//   e.preventDefault();
-//   isDragging = true;
-//   if (progressThumb) progressThumb.style.cursor = "grabbing";
-// }
-
-// function handleDrag(e) {
-//   if (!isDragging) return;
-
-//   const rect = progressBar.getBoundingClientRect();
-//   const dragX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-//   const percentage = dragX / rect.width;
-
-//   const series = allSeries[currentSeriesId];
-//   if (series) {
-//     const targetIndex = Math.round(percentage * (series.images.length - 1));
-//     goToImage(targetIndex);
-//   }
-// }
-
-// function endDrag() {
-//   isDragging = false;
-//   if (progressThumb) progressThumb.style.cursor = "grab";
-// }
 
 // Tool activation and management
 function setupToolsForViewport(element) {
@@ -1971,13 +2578,18 @@ function setupToolsForViewport(element) {
 // Tool activation
 function activateTool(toolName) {
   const activeElement = getActiveElement();
-  if (!activeElement || !cornerstone.getEnabledElements().some((e) => e.element === activeElement)) {
+  if (
+    !activeElement ||
+    !cornerstone.getEnabledElements().some((e) => e.element === activeElement)
+  ) {
     return;
   }
 
   if (!cornerstone.getEnabledElement(activeElement)) return;
 
-  document.querySelectorAll(".tool-btn").forEach((btn) => btn.classList.remove("active"));
+  document
+    .querySelectorAll(".tool-btn")
+    .forEach((btn) => btn.classList.remove("active"));
 
   if (typeof cornerstoneTools === "undefined") return;
 
@@ -2081,7 +2693,10 @@ function activateTool(toolName) {
 // Window/Level presets
 function applyPreset(presetName) {
   const activeElement = getActiveElement();
-  if (!activeElement || !cornerstone.getEnabledElements().some((e) => e.element === activeElement)) {
+  if (
+    !activeElement ||
+    !cornerstone.getEnabledElements().some((e) => e.element === activeElement)
+  ) {
     return;
   }
 
@@ -2106,7 +2721,6 @@ function applyPreset(presetName) {
       viewport.voi.windowWidth = 80;
       viewport.voi.windowCenter = 40;
       break;
-    
   }
 
   cornerstone.setViewport(activeElement, viewport);
@@ -2115,7 +2729,10 @@ function applyPreset(presetName) {
 
 function invertImage() {
   const activeElement = getActiveElement();
-  if (!activeElement || !cornerstone.getEnabledElements().some((e) => e.element === activeElement)) {
+  if (
+    !activeElement ||
+    !cornerstone.getEnabledElements().some((e) => e.element === activeElement)
+  ) {
     return;
   }
 
@@ -2128,7 +2745,10 @@ function invertImage() {
 
 function resetViewport() {
   const activeElement = getActiveElement();
-  if (!activeElement || !cornerstone.getEnabledElements().some((e) => e.element === activeElement)) {
+  if (
+    !activeElement ||
+    !cornerstone.getEnabledElements().some((e) => e.element === activeElement)
+  ) {
     return;
   }
 
@@ -2219,7 +2839,9 @@ function getActiveElement() {
 
 function ensureEnabled(el) {
   if (!el) return false;
-  const isEnabled = cornerstone.getEnabledElements().some((e) => e.element === el);
+  const isEnabled = cornerstone
+    .getEnabledElements()
+    .some((e) => e.element === el);
   if (!isEnabled) cornerstone.enable(el);
   return true;
 }
@@ -2249,7 +2871,10 @@ function getMetadataValue(dataSet, tag) {
 function formatDate(dateStr) {
   if (!dateStr) return "";
   if (dateStr.length === 8) {
-    return `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+    return `${dateStr.substring(0, 4)}-${dateStr.substring(
+      4,
+      6
+    )}-${dateStr.substring(6, 8)}`;
   }
   return dateStr;
 }
@@ -2265,22 +2890,19 @@ function formatTime(timeStr) {
 // UI utility functions
 function updateStatus(message) {
   if (statusText) statusText.textContent = message;
-  // console.log("Status:", message);
 }
 
 function showLoading(show, message = "Loading...") {
   const loadingOverlay = document.getElementById("loadingOverlay");
   const loadingText = document.getElementById("loadingText");
-  
+
   if (loadingOverlay) {
     loadingOverlay.style.display = show ? "flex" : "none";
   }
-  
+
   if (loadingText && message) {
     loadingText.textContent = message;
   }
-  
-  // console.log(show ? `Loading: ${message}` : "Loading finished");
 }
 
 function updateProgress(percent) {
@@ -2366,8 +2988,13 @@ async function showDicomTags() {
 
     // Try to get from cache
     try {
-      if (cornerstoneWADOImageLoader && cornerstoneWADOImageLoader.wadouri && cornerstoneWADOImageLoader.wadouri.dataSetCacheManager) {
-        dataSet = cornerstoneWADOImageLoader.wadouri.dataSetCacheManager.get(imageId);
+      if (
+        cornerstoneWADOImageLoader &&
+        cornerstoneWADOImageLoader.wadouri &&
+        cornerstoneWADOImageLoader.wadouri.dataSetCacheManager
+      ) {
+        dataSet =
+          cornerstoneWADOImageLoader.wadouri.dataSetCacheManager.get(imageId);
       }
     } catch (e) {
       console.log("Cache access failed:", e);
@@ -2388,7 +3015,8 @@ async function showDicomTags() {
       try {
         const reloadedImage = await cornerstone.loadAndCacheImage(imageId);
         if (reloadedImage.data && reloadedImage.data.byteArray) {
-          const arrayBuffer = reloadedImage.data.byteArray.buffer || reloadedImage.data.byteArray;
+          const arrayBuffer =
+            reloadedImage.data.byteArray.buffer || reloadedImage.data.byteArray;
           dataSet = dicomParser.parseDicom(new Uint8Array(arrayBuffer));
         }
       } catch (e) {
@@ -2405,7 +3033,9 @@ async function showDicomTags() {
       html += `<p>Image ID: ${imageId}</p>`;
       html += `<p>Width: ${image.width || "Unknown"}</p>`;
       html += `<p>Height: ${image.height || "Unknown"}</p>`;
-      html += `<p>Pixel Spacing: ${image.pixelSpacing ? image.pixelSpacing.join(", ") : "Unknown"}</p>`;
+      html += `<p>Pixel Spacing: ${
+        image.pixelSpacing ? image.pixelSpacing.join(", ") : "Unknown"
+      }</p>`;
       html += "</div>";
 
       const dicomTagContent = document.getElementById("dicomTagContent");
@@ -2466,7 +3096,8 @@ function createDicomTagsTable(dataSet, image) {
   let html = "<div class='table-responsive'>";
   html += "<table class='table table-bordered table-sm table-striped'>";
   html += "<thead class='thead-dark'>";
-  html += "<tr><th style='width: 15%'>Tag</th><th style='width: 35%'>Name</th><th style='width: 50%'>Value</th></tr>";
+  html +=
+    "<tr><th style='width: 15%'>Tag</th><th style='width: 35%'>Name</th><th style='width: 50%'>Value</th></tr>";
   html += "</thead><tbody>";
 
   // Common DICOM tags to prioritize
@@ -2593,7 +3224,9 @@ function createDicomTagsTable(dataSet, image) {
       <h6><i class='fas fa-info-circle'></i> DICOM Information</h6>
       <div class='row'>
         <div class='col-md-6'>
-          <strong>Total Tags:</strong> ${Object.keys(dataSet.elements).length}<br>
+          <strong>Total Tags:</strong> ${
+            Object.keys(dataSet.elements).length
+          }<br>
           <strong>Image Size:</strong> ${image.width}×${image.height}
         </div>
         <div class='col-md-6'>
@@ -2617,11 +3250,14 @@ function createDicomTagsTable(dataSet, image) {
 
   // Add separator if we have common tags
   if (addedTags.size > 0) {
-    html += "<tr><td colspan='3' class='table-secondary text-center'><strong>Other Tags</strong></td></tr>";
+    html +=
+      "<tr><td colspan='3' class='table-secondary text-center'><strong>Other Tags</strong></td></tr>";
   }
 
   // Then add remaining tags
-  const remainingTags = Object.keys(dataSet.elements).filter((tag) => !addedTags.has(tag));
+  const remainingTags = Object.keys(dataSet.elements).filter(
+    (tag) => !addedTags.has(tag)
+  );
   remainingTags.slice(0, 50).forEach((tag) => {
     const name = getTagDescription(tag);
     const value = getTagValue(dataSet, tag);
@@ -2650,8 +3286,13 @@ function exportDicomTags() {
     let dataSet = null;
 
     try {
-      if (cornerstoneWADOImageLoader && cornerstoneWADOImageLoader.wadouri && cornerstoneWADOImageLoader.wadouri.dataSetCacheManager) {
-        dataSet = cornerstoneWADOImageLoader.wadouri.dataSetCacheManager.get(imageId);
+      if (
+        cornerstoneWADOImageLoader &&
+        cornerstoneWADOImageLoader.wadouri &&
+        cornerstoneWADOImageLoader.wadouri.dataSetCacheManager
+      ) {
+        dataSet =
+          cornerstoneWADOImageLoader.wadouri.dataSetCacheManager.get(imageId);
       }
     } catch (e) {
       console.log("Cache access failed:", e);
@@ -2691,7 +3332,11 @@ function exportDicomTags() {
 
         // Escape commas and quotes in CSV
         value = String(value).replace(/"/g, '""');
-        if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+        if (
+          value.includes(",") ||
+          value.includes('"') ||
+          value.includes("\n")
+        ) {
           value = `"${value}"`;
         }
 
@@ -2804,7 +3449,7 @@ window.showDicomTags = showDicomTags;
 window.exportDicomTags = exportDicomTags;
 window.loadDicomFromIndexedDB = loadDicomFromIndexedDB;
 window.loadDicomFromStorage = loadDicomFromStorage;
-
 window.activateMPR = activateMPR;
 window.deactivateMPR = deactivateMPR;
 window.mprState = mprState;
+
