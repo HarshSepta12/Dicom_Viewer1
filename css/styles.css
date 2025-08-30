@@ -1283,6 +1283,15 @@ body {
   animation-delay: 0.3s;
 }
 
+#viewportContainer {
+  width: 100%;
+  height: 100%;        /* or a fixed px height */
+  min-height: 400px;   /* ensure non-zero height */
+}
+.dicom-viewport, #dicomImage {
+  width: 100%;
+  height: 100%;
+}
 
 
 
@@ -1373,12 +1382,7 @@ body {
     border: 1px solid #333 !important;
 }
 
-.mpr-viewport canvas {
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain; /* Maintain aspect ratio */
-  image-rendering: crisp-edges; /* Better for medical images */
-}
+
 /* MPR specific styles */
 .mpr-grid {
   display: grid !important;
@@ -1396,15 +1400,71 @@ body {
   overflow: hidden;
 }
 
-.mpr-viewport {
-  width: 100% !important;
-  height: 100% !important;
-  background: #000000;
-  position: relative;
-  min-height: 400px;
-}
+
 
 
 .mpr-viewport:hover {
   border-color: #0f0 !important;
 }
+
+/* /// */
+/* Container must have a resolved height; you already have full-page layout */
+#mprContainer {
+  display: none;
+  width: 100%;
+  height: 100%; /* parent (viewport wrapper) must also have height */
+  background: #0b1426;
+}
+
+
+.mpr-viewport {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  border: 2px solid #374151 !important;
+}
+.mpr-viewport canvas {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+}
+
+
+
+
+/* Professional 3D Integration Styles */
+#ohifContainer {
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  margin: 10px 0;
+}
+
+.mpr-ohif-active {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+  color: white !important;
+  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+  transform: translateY(-1px);
+}
+
+/* Professional UI Enhancements */
+.tool-btn {
+  transition: all 0.2s ease;
+}
+
+.tool-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.professional-success {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  color: white;
+  padding: 15px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.4);
+}
+
+
+
+/* https://viewer.ohif.org/viewer?StudyInstanceUIDs=f5fb48d5-af3afd53-088f1223-6ffab861-8d76e2be&SeriesInstanceUIDs=1eeedc2c-7e28574a-cf158e19-1bc9dad8-5eef8ba6&initialSeriesInstanceUID=1eeedc2c-7e28574a-cf158e19-1bc9dad8-5eef8ba6 */

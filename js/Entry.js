@@ -1,7 +1,7 @@
 // Global variables
 let uploadedFolders = [];
 let pacsStudies = [];
-const PACS_SERVER_URL = "http://localhost:5000/orthanc/";
+const PACS_SERVER_URL = "http://localhost:5000/orthanc"; 
 const DEFAULT_CREDENTIALS = {
   username: "harsh",
   password: "12345",
@@ -97,17 +97,34 @@ function setupEventListeners() {
 }
 async function loadAndStoreCredentials() {
   try {
-    const response = await fetch("http://localhost:5000/api/credentials");
-    if (!response.ok) throw new Error("Failed to fetch credentials");
+    const response = await fetch("http://localhost:5000/api/credentials", {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      console.warn('Credentials API not available, using defaults');
+      const defaultCreds = DEFAULT_CREDENTIALS;
+      localStorage.setItem("pacsCredentials", JSON.stringify(defaultCreds));
+      return defaultCreds;
+    }
     
     const creds = await response.json();
     localStorage.setItem("pacsCredentials", JSON.stringify(creds));
+    console.log("✅ Credentials loaded from server:", creds);
+    return creds;
     
-    console.log("Credentials stored in localStorage", creds);
   } catch (error) {
-    console.error("Error loading credentials:", error);
+    console.warn("⚠️ Using default credentials due to error:", error.message);
+    const defaultCreds = DEFAULT_CREDENTIALS;
+    localStorage.setItem("pacsCredentials", JSON.stringify(defaultCreds));
+    return defaultCreds;
   }
 }
+
 
 // Call this once when your app loads
 loadAndStoreCredentials();
@@ -130,22 +147,33 @@ function getAuthHeaders() {
 
 // Check PACS connection
 async function checkPACSConnection() {
-  // debugger
   try {
+    console.log('🔍 Testing PACS connection...');
+    
     const headers = getAuthHeaders();
-    const response = await fetch(`${PACS_SERVER_URL}/system`, {
+    const url = `${PACS_SERVER_URL}/system`;
+    
+    console.log('📡 Connecting to:', url);
+    console.log('🔑 Using headers:', headers);
+    
+    const response = await fetch(url, {
       method: "GET",
       mode: "cors",
       headers: headers,
     });
-      console.log("PACS server connected");
-      return true;
 
-    
+    if (response.ok) {
+      const systemInfo = await response.json();
+      console.log("✅ PACS server connected successfully:", systemInfo);
+      return true;
+    } else {
+      console.error("❌ PACS server response error:", response.status, response.statusText);
+      return false;
+    }
   } catch (error) {
-    console.error("PACS connection failed:", error);
+    console.error("❌ PACS connection failed:", error);
+    return false;
   }
-  return false;
 }
 
 // Load studies from PACS
@@ -153,75 +181,111 @@ async function loadFromPACS() {
   showLoading(true, "Loading studies from PACS server...");
 
   try {
+    // Test connection first
+    const connectionOk = await checkPACSConnection();
+    if (!connectionOk) {
+      throw new Error("Cannot connect to PACS server. Please check if Orthanc is running on port 8042.");
+    }
+
     const headers = getAuthHeaders();
-    const response = await fetch(`${PACS_SERVER_URL}/studies`, {
+    const url = `${PACS_SERVER_URL}/studies`;
+    
+    console.log('📚 Loading studies from:', url);
+    
+    const response = await fetch(url, {
       method: "GET",
       mode: "cors",
       headers: headers,
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
     }
 
     const studies = await response.json();
-    // console.log("Loaded studies from PACS:", studies);
+    console.log("📊 Found studies:", studies.length);
 
     pacsStudies = [];
 
-    for (let i = 0; i < studies.length; i++) {
+    // Process studies with better error handling
+    for (let i = 0; i < Math.min(studies.length, 10); i++) { // Limit to first 10 for performance
       const studyId = studies[i];
-      loadingText.textContent = `Processing study ${i + 1}/${studies.length}...`;
+      loadingText.textContent = `Processing study ${i + 1}/${Math.min(studies.length, 10)}...`;
 
       try {
-        const studyResponse = await fetch(`${PACS_SERVER_URL}/studies/${studyId}`, {
-          method: "GET",
-          mode: "cors",
-          headers: headers,
-        });
-        const studyInfo = await studyResponse.json();
-        // console.log(studyInfo);
-        
-        const instancesResponse = await fetch(`${PACS_SERVER_URL}/studies/${studyId}/instances`, {
-          method: "GET",
-          mode: "cors",
-          headers: headers,
-        });
-        const instances = await instancesResponse.json();
-
-        const folderData = {
-          id: `pacs_${studyId}`,
-          name: studyInfo.MainDicomTags?.InstitutionName || `Study ${studyId}`,
-          patientName: studyInfo.PatientMainDicomTags?.PatientName || "Unknown Patient",
-          patientId: studyInfo.PatientMainDicomTags?.PatientID || "",
-          date: studyInfo.MainDicomTags?.StudyDate || new Date().toISOString().split("T")[0],
-          studyTime: studyInfo.MainDicomTags?.StudyTime || "",
-          modality: studyInfo.MainDicomTags?.ModalitiesInStudy || "DICOM",
-          type: "PACS Study",
-          fileCount: instances.length,
-          studyId: studyId,
-          instances: instances,
-          source: "pacs",
-          accessionNumber: studyInfo.MainDicomTags?.AccessionNumber || "",
-          studyInstanceUID: studyInfo.MainDicomTags?.StudyInstanceUID || "",
-        };
-
-        pacsStudies.push(folderData);
+        const studyInfo = await loadStudyInfo(studyId, headers);
+        if (studyInfo) {
+          pacsStudies.push(studyInfo);
+        }
       } catch (studyError) {
-        console.error(`Error processing study ${studyId}:`, studyError);
+        console.warn(`⚠️ Skipping study ${studyId}:`, studyError.message);
       }
     }
 
     // Combine local and PACS studies
     uploadedFolders = [...getLocalFolders(), ...pacsStudies];
     displayFolders(uploadedFolders);
+    
+    console.log(`✅ Successfully loaded ${pacsStudies.length} PACS studies`);
+    
   } catch (error) {
-    console.error("Error loading from PACS server:", error);
+    console.error("❌ Error loading from PACS server:", error);
+    
+    // Show user-friendly error message
+    const errorMessage = error.message.includes('Failed to fetch') 
+      ? 'Cannot connect to PACS server. Please ensure the server is running and accessible.'
+      : error.message;
+      
+    alert(`PACS Loading Error: ${errorMessage}`);
   } finally {
     showLoading(false);
   }
 }
 
+
+async function loadStudyInfo(studyId, headers) {
+  try {
+    const studyResponse = await fetch(`${PACS_SERVER_URL}/studies/${studyId}`, {
+      method: "GET",
+      mode: "cors",
+      headers: headers,
+    });
+    
+    if (!studyResponse.ok) {
+      throw new Error(`Study ${studyId} not accessible: ${studyResponse.status}`);
+    }
+    
+    const studyInfo = await studyResponse.json();
+    
+    const instancesResponse = await fetch(`${PACS_SERVER_URL}/studies/${studyId}/instances`, {
+      method: "GET",
+      mode: "cors",
+      headers: headers,
+    });
+    
+    const instances = instancesResponse.ok ? await instancesResponse.json() : [];
+
+    return {
+      id: `pacs_${studyId}`,
+      name: studyInfo.MainDicomTags?.StudyDescription || `Study ${studyId}`,
+      patientName: studyInfo.PatientMainDicomTags?.PatientName || "Unknown Patient",
+      patientId: studyInfo.PatientMainDicomTags?.PatientID || "",
+      date: studyInfo.MainDicomTags?.StudyDate || new Date().toISOString().split("T")[0],
+      studyTime: studyInfo.MainDicomTags?.StudyTime || "",
+      modality: studyInfo.MainDicomTags?.ModalitiesInStudy || "DICOM",
+      type: "PACS Study",
+      fileCount: instances.length,
+      studyId: studyId,
+      instances: instances,
+      source: "pacs",
+      accessionNumber: studyInfo.MainDicomTags?.AccessionNumber || "",
+      studyInstanceUID: studyInfo.MainDicomTags?.StudyInstanceUID || "",
+    };
+  } catch (error) {
+    console.warn(`Study ${studyId} processing failed:`, error);
+    return null;
+  }
+}
 // Get local folders
 function getLocalFolders() {
   return uploadedFolders.filter((folder) => folder.source !== "pacs");

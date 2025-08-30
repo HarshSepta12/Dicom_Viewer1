@@ -14,9 +14,11 @@ if (typeof dicomParser === "undefined") {
 
 // Initialize Cornerstone Tools
 if (typeof cornerstoneTools !== "undefined") {
-  cornerstoneTools.external.Hammer =  typeof Hammer !== "undefined" ? Hammer : undefined;
+  cornerstoneTools.external.Hammer =
+    typeof Hammer !== "undefined" ? Hammer : undefined;
   cornerstoneTools.external.cornerstone = cornerstone;
-  cornerstoneTools.external.cornerstoneMath = typeof cornerstoneMath !== "undefined" ? cornerstoneMath : undefined;
+  cornerstoneTools.external.cornerstoneMath =
+    typeof cornerstoneMath !== "undefined" ? cornerstoneMath : undefined;
   cornerstoneTools.init({
     showSVGCursors: true,
   });
@@ -34,9 +36,20 @@ let currentImageIndex = 0;
 let loaded = false;
 let activeViewport = null;
 const API_BASE = "http://localhost:5000/orthanc";
+const headers = {
+  "Content-Type": "application/json",
+};
+
+// Add basic auth if credentials exist
+const username = sessionStorage.getItem("pacsUsername");
+const password = sessionStorage.getItem("pacsPassword");
+if (username && password) {
+  headers["Authorization"] = "Basic " + btoa(username + ":" + password);
+}
+
 const urlParams = new URLSearchParams(window.location.search);
 const studyId = urlParams.get("study");
-  
+
 // Cine playback variables
 let isPlaying = false;
 let playbackInterval = null;
@@ -101,1330 +114,861 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 });
 
-// Enhanced MPR functionality for DICOM Viewer - COMPLETE VERSION
-// MPR state management - Enhanced
-let mprState = {
+
+// ====================== WORKING 3D MPR USING 2D CORNERSTONE ======================
+let mpr3dAvailable = true; // We'll make our own 3D MPR
+let currentMPRLayout = null;
+
+// Enhanced MPR State - integrate from mpr.js and mpr2.js
+const mprState = {
   isActive: false,
-  volumeData: null,
-  crosshairPosition: { x: 0.5, y: 0.5, z: 0.5 }, // Normalized coordinates (0-1)
+  currentSeries: null,
+  currentImageIndex: 0,
   viewports: {
     axial: null,
     sagittal: null,
-    coronal: null,
+    coronal: null
   },
-  imageData: {
-    axial: [],
-    sagittal: [],
-    coronal: [],
-  },
-  dimensions: null,
-  spacing: null,
-  currentSlices: {
-    axial: 0,
-    sagittal: 0,
-    coronal: 0,
-  },
-  // Cache for better performance
-  cachedImages: {
-    sagittal: new Map(),
-    coronal: new Map(),
-  },
-  isInitialized: false,
+  crosshair: { x: 0, y: 0, z: 0 },
+  syncEnabled: true,
+  
+  // Enhanced from library files
+  pixelData: [],
+  pixelData2: [],
+  imageStack: [],
+  rotateSpeed: 5,
+  maxLength: 0,
+  center: { x: 0, y: 0, z: 0 },
+  thicknessList: [],
+  thickness: 0,
+  pointX: 0,
+  pointY: 0,
+  bufferX: 0,
+  bufferY: 0
 };
 
-// Enhanced MPR activation function 
-async function activateMPR() {
-  const container = document.getElementById("mprContainer");
-  const normalViewport = document.getElementById("viewportContainer");
-  const dicomImage = document.getElementById("dicomImage");
- 
-  // Validate prerequisites
-  if (!currentSeriesId || !allSeries[currentSeriesId]) {
-    showError("No series loaded. Please load DICOM images first.");
+// Global MPR variables from library
+var openMPR = false;
+var openMPR2 = false;
+var o3dPixelData = [];
+var o3dPixelData2 = [];
+var o3dImage = [];
+var o3dRotateSpeed = 5;
+var o3dMaxLen;
+var o3dCenter;
+var thicknessList_MPR = [];
+var Thickness_MPR = 0;
+var o3DPointX = 0;
+var o3DPointY = 0;
+var buffer_mpr_X = 0;
+var buffer_mpr_Y = 0;
+
+// Enhanced activateMPR3D function integrating library features
+function activateMPR3D() {
+  console.log('Activating Enhanced 3D MPR...');
+  
+  if (!currentSeriesId || !allSeries[currentSeriesId]?.images?.length) {
+    alert("No series loaded to activate 3D MPR");
     return;
   }
 
   const series = allSeries[currentSeriesId];
-  if (!series || !series.images || series.images.length < 1) {
-    showError("Current series has no images or insufficient images for MPR.");
+  if (series.images.length < 3) {
+    alert("Need at least 3 images for MPR view");
     return;
   }
 
-  console.log(`Starting MPR with series: ${currentSeriesId}, images: ${series.images.length}`);
-
-  showLoading(true, "Preparing MPR views...");
-
   try {
-    // Clean up any existing MPR state first
-    if (mprState.isActive || mprState.isInitialized) {
-      console.log("Cleaning up existing MPR state...");
-      await cleanupMPR();
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Hide normal view
-    if (normalViewport) normalViewport.style.display = "none";
-    if (dicomImage) dicomImage.style.display = "none";
-
-    // Show MPR container
-    if (!container) {
-      throw new Error("MPR container not found in DOM");
-    }
-    container.style.display = "grid";
+    // Set global flags
+    openMPR = true;
+    openMPR2 = true;
+    
+    // Hide 2D viewer and show MPR container
+    document.getElementById("viewportContainer").style.display = "none";
+    const mprContainer = document.getElementById("mprContainer");
+    mprContainer.style.display = "grid";
+    mprContainer.style.height = "100%";
+    
+    // Store current state
     mprState.isActive = true;
-
-    // Step 1: Prepare volume data
-    updateStatus("Step 1/4: Preparing volume data...");
-    await prepareVolumeData(series);
+    mprState.currentSeries = series;
+    mprState.currentImageIndex = currentImageIndex;
     
-    if (!mprState.volumeData || mprState.volumeData.length === 0) {
-      throw new Error("Volume data preparation failed - no data available");
-    }
-
-    // Step 2: Initialize MPR viewports
-    updateStatus("Step 2/4: Initializing viewports...");
-    await initializeMPRViewports();
-
-    if (!mprState.viewports.axial || !mprState.viewports.sagittal || !mprState.viewports.coronal) {
-      throw new Error("Failed to initialize MPR viewports");
-    }
-
-    // Step 3: Setup synchronization
-    updateStatus("Step 3/4: Setting up synchronization...");
-    setupMPRSynchronization();
-
-    // Step 4: Initial render
-    updateStatus("Step 4/4: Rendering MPR views...");
-    await renderMPRViews();
-
-    // Setup MPR-specific tools and controls
-    setupMPRTools();
-    setupMPRControls();
-
-    mprState.isInitialized = true;
-    showSuccess("MPR Mode Activated Successfully");
-    updateStatus(`MPR Mode - ${mprState.volumeData.length} images loaded`);
-
-  } catch (err) {
-    console.error("MPR activation failed:", err);
-    showError("MPR activation failed: " + err.message);
+    // Initialize pixel data arrays from library functionality
+    initializeMPRData(series);
     
-    // Cleanup on failure
-    try {
-      await cleanupMPR();
-      
-      // Restore normal view
-      if (container) container.style.display = "none";
-      if (normalViewport) normalViewport.style.display = "block";
-      if (dicomImage) dicomImage.style.display = "block";
-      
-    } catch (cleanupError) {
-      console.error("Cleanup after failure also failed:", cleanupError);
-    }
-  } finally {
-    showLoading(false);
+    // Set up the three MPR viewports with enhanced features
+    setupEnhancedMPRViewports();
+    
+    console.log("Enhanced 3D MPR activated successfully");
+  } catch (error) {
+    console.error('Error activating Enhanced MPR:', error);
+    alert('Failed to activate Enhanced MPR: ' + error.message);
+    
+    // Revert on error
+    deactivateMPR3D();
   }
 }
 
-// Enhanced volume data preparation with better error handling
-async function prepareVolumeData(series) {
-  updateStatus("Loading and sorting volume data...");
-
-  if (!series || !series.images || series.images.length === 0) {
-    throw new Error("No series or images provided for volume preparation");
-  }
-
-  console.log(`Preparing volume data for ${series.images.length} images`);
-
-  const images = [];
-  let loadedCount = 0;
-
-  // Sort images by instance number or slice location for proper ordering
-  const sortedImages = [...series.images].sort((a, b) => {
-    const aNum = a.instanceNumber || 0;
-    const bNum = b.instanceNumber || 0;
-    return aNum - bNum;
-  });
-
-  console.log("Sorted images:", sortedImages.length);
-
-  // Load all images with progress tracking
-  for (let i = 0; i < sortedImages.length; i++) {
-    try {
-      updateStatus(`Loading slice ${i + 1}/${sortedImages.length}...`);
-      
-      const imageId = sortedImages[i].imageId;
-      if (!imageId) {
-        throw new Error(`No imageId found for image ${i + 1}`);
-      }
-
-      console.log(`Loading image ${i + 1}: ${imageId}`);
-      
-      const image = await cornerstone.loadAndCacheImage(imageId);
-
-      // Validate image data
-      if (!image) {
-        throw new Error(`Failed to load image ${i + 1}`);
-      }
-
-      if (!image.getPixelData || typeof image.getPixelData !== "function") {
-        throw new Error(`Invalid image data for slice ${i + 1} - no getPixelData function`);
-      }
-
-      const pixelData = image.getPixelData();
-      if (!pixelData || pixelData.length === 0) {
-        throw new Error(`Empty pixel data for slice ${i + 1}`);
-      }
-
-      // Validate dimensions
-      if (!image.width || !image.height || image.width <= 0 || image.height <= 0) {
-        throw new Error(`Invalid dimensions for slice ${i + 1}: ${image.width}x${image.height}`);
-      }
-
-      images[i] = image;
-      loadedCount++;
-
-      console.log(`Successfully loaded image ${i + 1}/${sortedImages.length}`);
-
-      // Allow UI to update every few images
-      if (i % 3 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
-    } catch (error) {
-      console.error(`Failed to load image ${i + 1}:`, error);
-      throw new Error(`Failed to load image ${i + 1}: ${error.message}`);
-    }
-  }
-
-  if (images.length === 0 || loadedCount === 0) {
-    throw new Error("No images were successfully loaded");
-  }
-
-  // Validate images have consistent dimensions
-  const firstImage = images[0];
-  if (!firstImage) {
-    throw new Error("First image is null or undefined");
-  }
-
-  for (let i = 1; i < images.length; i++) {
-    if (!images[i]) {
-      throw new Error(`Image ${i + 1} is null or undefined`);
-    }
-    
-    if (
-      images[i].width !== firstImage.width ||
-      images[i].height !== firstImage.height
-    ) {
-      throw new Error(
-        `Image ${i + 1} has inconsistent dimensions (${images[i].width}x${
-          images[i].height
-        }) compared to first image (${firstImage.width}x${firstImage.height})`
-      );
-    }
-  }
-
-  // Store the volume data
-  mprState.volumeData = images;
-
-  // Extract image dimensions and spacing
-  mprState.dimensions = {
-    width: firstImage.width,
-    height: firstImage.height,
-    depth: images.length,
-  };
-
-  // Get pixel spacing from DICOM metadata with better fallbacks
-  mprState.spacing = {
-    x: firstImage.columnPixelSpacing || firstImage.pixelSpacing?.[0] || 1.0,
-    y: firstImage.rowPixelSpacing || firstImage.pixelSpacing?.[1] || 1.0,
-    z: getSliceSpacing(images) || firstImage.sliceThickness || 1.0,
-  };
-
-  // Clear any cached reformatted data
-  mprState.cachedImages.sagittal.clear();
-  mprState.cachedImages.coronal.clear();
-
-  console.log("Volume prepared successfully:", {
-    dimensions: mprState.dimensions,
-    spacing: mprState.spacing,
-    imageCount: mprState.volumeData.length
-  });
-
-  updateStatus(`Volume data prepared: ${loadedCount} images`);
-}
-
-// Calculate slice spacing from image positions
-function getSliceSpacing(images) {
-  if (images.length < 2) return 1.0;
-
+function setupEnhancedMPRViewports() {
+  const series = mprState.currentSeries;
+  const totalImages = series.images.length;
+  
+  // Calculate indices for different views
+  const axialIndex = mprState.currentImageIndex;
+  const sagittalIndex = Math.floor(totalImages / 2);
+  const coronalIndex = Math.floor(totalImages * 0.3);
+  
+  // Get viewport elements
+  const axialElement = document.getElementById("mprAxial");
+  const sagittalElement = document.getElementById("mprSagittal");
+  const coronalElement = document.getElementById("mprCoronal");
+  
+  // Add enhanced labels with crosshair info
+  addEnhancedMPRLabels();
+  
+  // Enable cornerstone on all elements
   try {
-    // Try to get from image position if available
-    const first = images[0];
-    const second = images[1];
-
-    if (first.imagePositionPatient && second.imagePositionPatient) {
-      const pos1 = first.imagePositionPatient;
-      const pos2 = second.imagePositionPatient;
-      const dx = pos2[0] - pos1[0];
-      const dy = pos2[1] - pos1[1];
-      const dz = pos2[2] - pos1[2];
-      return Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
-    // Fallback to slice location if available
-    if (
-      first.sliceLocation !== undefined &&
-      second.sliceLocation !== undefined
-    ) {
-      return Math.abs(second.sliceLocation - first.sliceLocation);
-    }
+    cornerstone.enable(axialElement);
+    cornerstone.enable(sagittalElement);
+    cornerstone.enable(coronalElement);
   } catch (e) {
-    console.warn("Could not calculate slice spacing:", e);
+    console.log("Elements already enabled");
   }
-
-  return 1.0;
+  
+  // Load images with enhanced processing
+  Promise.all([
+    loadEnhancedMPRImage(axialElement, axialIndex, 'axial'),
+    loadEnhancedMPRImage(sagittalElement, sagittalIndex, 'sagittal'),
+    loadEnhancedMPRImage(coronalElement, coronalIndex, 'coronal')
+  ]).then(() => {
+    // Store viewport references
+    mprState.viewports.axial = axialElement;
+    mprState.viewports.sagittal = sagittalElement;
+    mprState.viewports.coronal = coronalElement;
+    
+    // Setup enhanced sync and interaction
+    setupEnhancedMPRSync();
+    
+    // Draw crosshairs on all viewports
+    drawCrosshairs();
+    
+  }).catch(error => {
+    console.error('Error loading Enhanced MPR images:', error);
+  });
 }
 
-// Enhanced viewport initialization with proper cleanup
-async function initializeMPRViewports() {
-  const axialEl = document.getElementById("mprAxial");
-  const sagittalEl = document.getElementById("mprSagittal");
-  const coronalEl = document.getElementById("mprCoronal");
-
-  if (!axialEl || !sagittalEl || !coronalEl) {
-    throw new Error("MPR viewport elements not found in DOM");
+// Enhanced image loading with crosshair integration
+async function loadEnhancedMPRImage(element, imageIndex, orientation) {
+  const series = mprState.currentSeries;
+  const image = await cornerstone.loadImage(series.images[imageIndex].imageId);
+  
+  // Display the image
+  cornerstone.displayImage(element, image);
+  
+  // Add orientation-specific processing from library
+  if (orientation === 'axial') {
+    // Process axial view with library functions
+    processAxialView(element, image, imageIndex);
+  } else if (orientation === 'sagittal') {
+    // Process sagittal view
+    processSagittalView(element, image, imageIndex);
+  } else if (orientation === 'coronal') {
+    // Process coronal view
+    processCoronalView(element, image, imageIndex);
   }
+  
+  return image;
+}
 
-  const allViewports = [axialEl, sagittalEl, coronalEl];
-
-  // Clean up existing instances thoroughly
-  for (const el of allViewports) {
-    await cleanupViewport(el);
+// Process different MPR orientations (from library integration)
+function processAxialView(element, image, index) {
+  // Extract pixel data for axial processing
+  if (image.data && image.data.pixelData) {
+    o3dPixelData[index] = new Uint16Array(image.data.pixelData);
   }
+  
+  // Apply axial-specific transformations
+  const viewport = cornerstone.getViewport(element);
+  viewport.rotation = 0; // Axial default rotation
+  cornerstone.setViewport(element, viewport);
+}
 
-  // Wait for cleanup to complete
-  await new Promise(resolve => setTimeout(resolve, 200));
+function processSagittalView(element, image, index) {
+  // Extract pixel data for sagittal processing
+  if (image.data && image.data.pixelData) {
+    o3dPixelData2[index] = new Uint16Array(image.data.pixelData);
+  }
+  
+  // Apply sagittal-specific transformations
+  const viewport = cornerstone.getViewport(element);
+  viewport.rotation = 90; // Sagittal rotation
+  cornerstone.setViewport(element, viewport);
+}
 
-  try {
-    // Enable cornerstone on each viewport with proper sizing
-    for (const el of allViewports) {
-      // Ensure proper sizing before enabling
-      el.style.width = "100%";
-      el.style.height = "100%";
-      el.style.position = "relative";
-      el.style.overflow = "hidden";
-      
-      cornerstone.enable(el);
-      
-      // Force a resize to ensure proper canvas dimensions
-      setTimeout(() => {
-        try {
-          cornerstone.resize(el, true);
-        } catch (e) {
-          console.warn("Resize failed for element:", e);
-        }
-      }, 100);
+
+
+function processCoronalView(element, image, index) {
+  // Apply coronal-specific transformations
+  const viewport = cornerstone.getViewport(element);
+  viewport.rotation = 0; // Coronal rotation
+  viewport.hflip = true; // Flip horizontally for coronal view
+  cornerstone.setViewport(element, viewport);
+}
+
+// Enhanced MPR synchronization from library
+function setupEnhancedMPRSync() {
+  const series = mprState.currentSeries;
+  
+  // Add enhanced scroll functionality
+  Object.entries(mprState.viewports).forEach(([orientation, element]) => {
+    if (!element) return;
+    
+    // Remove existing handlers
+    if (element._mprScrollHandler) {
+      element.removeEventListener('wheel', element._mprScrollHandler);
     }
-  } catch (error) {
-    throw new Error(
-      "Failed to enable cornerstone on MPR viewports: " + error.message
-    );
-  }
-
-  mprState.viewports = {
-    axial: axialEl,
-    sagittal: sagittalEl,
-    coronal: coronalEl,
-  };
-
-  // Add viewport labels with better styling
-  addViewportLabel(axialEl, "Axial", "#ff6b6b");
-  addViewportLabel(sagittalEl, "Sagittal", "#4ecdc4");
-  addViewportLabel(coronalEl, "Coronal", "#45b7d1");
-
-  console.log("MPR viewports initialized successfully");
+    if (element._mprClickHandler) {
+      element.removeEventListener('click', element._mprClickHandler);
+    }
+    if (element._mprMoveHandler) {
+      element.removeEventListener('mousemove', element._mprMoveHandler);
+    }
+    
+    // Enhanced scroll handler with library integration
+    element._mprScrollHandler = function(event) {
+      event.preventDefault();
+      
+      const delta = event.deltaY > 0 ? 1 : -1;
+      let newIndex = mprState.currentImageIndex + delta;
+      
+      // Clamp to valid range
+      newIndex = Math.max(0, Math.min(series.images.length - 1, newIndex));
+      
+      if (newIndex !== mprState.currentImageIndex) {
+        mprState.currentImageIndex = newIndex;
+        updateEnhancedMPRSlice(orientation, newIndex);
+        
+        // Update crosshair position based on library logic
+        if (orientation === 'axial') {
+          updateCrosshairPosition(o3DPointX, o3DPointY, newIndex);
+        }
+      }
+    };
+    
+    // Enhanced click handler for crosshair positioning
+    element._mprClickHandler = function(event) {
+      const rect = element.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+      
+      // Convert click coordinates to image coordinates
+      const imageX = Math.floor((clickX / rect.width) * (element.clientWidth || 512));
+      const imageY = Math.floor((clickY / rect.height) * (element.clientHeight || 512));
+      
+      // Update crosshair position using library logic
+      updateCrosshairFromClick(orientation, imageX, imageY);
+    };
+    
+    // Enhanced mouse move handler for real-time crosshair
+    element._mprMoveHandler = function(event) {
+      if (event.buttons === 1) { // Left mouse button pressed
+        const rect = element.getBoundingClientRect();
+        const moveX = event.clientX - rect.left;
+        const moveY = event.clientY - rect.top;
+        
+        // Update buffer positions from library
+        buffer_mpr_X = moveX;
+        buffer_mpr_Y = moveY;
+        
+        // Redraw crosshairs
+        drawCrosshairs();
+      }
+    };
+    
+    // Attach enhanced event listeners
+    element.addEventListener('wheel', element._mprScrollHandler);
+    element.addEventListener('click', element._mprClickHandler);
+    element.addEventListener('mousemove', element._mprMoveHandler);
+  });
 }
 
-// Enhanced viewport cleanup
-async function cleanupViewport(element) {
-  if (!element) return;
+// Enhanced slice update with library integration
+function updateEnhancedMPRSlice(changedViewport, newIndex) {
+  const series = mprState.currentSeries;
+  
+  // Update the specific viewport that changed
+  const element = mprState.viewports[changedViewport];
+  if (element) {
+    loadEnhancedMPRImage(element, newIndex, changedViewport);
+  }
+  
+  // Sync with other viewports if enabled
+  if (mprState.syncEnabled) {
+    // Update other viewports based on crosshair position
+    syncMPRViewportsFromLibrary(changedViewport, newIndex);
+  }
+  
+  // Update main 2D viewer index
+  currentImageIndex = newIndex;
+  
+  // Redraw crosshairs on all viewports
+  drawCrosshairs();
+}
 
-  try {
-    // Remove all event listeners
-    ['click', 'mouseenter', 'mouseleave', 'cornerstoneimagerendered'].forEach(eventType => {
-      const handlerName = `_mpr${eventType.charAt(0).toUpperCase() + eventType.slice(1)}Handler`;
-      if (element[handlerName]) {
-        element.removeEventListener(eventType, element[handlerName]);
-        element[handlerName] = null;
-      }
-    });
+// Synchronize viewports using library logic
+function syncMPRViewportsFromLibrary(sourceViewport, sourceIndex) {
+  const crosshairX = o3DPointX;
+  const crosshairY = o3DPointY;
+  const crosshairZ = sourceIndex;
+  
+  // Update other viewports based on crosshair position
+  Object.entries(mprState.viewports).forEach(([orientation, element]) => {
+    if (orientation === sourceViewport || !element) return;
+    
+    let targetIndex;
+    if (orientation === 'axial') {
+      targetIndex = crosshairZ;
+    } else if (orientation === 'sagittal') {
+      targetIndex = Math.floor((crosshairX / o3dMaxLen) * mprState.currentSeries.images.length);
+    } else if (orientation === 'coronal') {
+      targetIndex = Math.floor((crosshairY / o3dMaxLen) * mprState.currentSeries.images.length);
+    }
+    
+    // Clamp and update
+    targetIndex = Math.max(0, Math.min(mprState.currentSeries.images.length - 1, targetIndex));
+    loadEnhancedMPRImage(element, targetIndex, orientation);
+  });
+}
 
-    // Clear cornerstone tools state
-    if (typeof cornerstoneTools !== "undefined") {
+// Initialize MPR data structures from library
+function initializeMPRData(series) {
+  o3dPixelData = [];
+  o3dPixelData2 = [];
+  o3dImage = [];
+  thicknessList_MPR = [];
+  
+  // Process each image in the series
+  series.images.forEach((image, index) => {
+    // Store image references for MPR processing
+    o3dImage[index] = image;
+    
+    // Initialize pixel data arrays for each image
+    o3dPixelData[index] = [];
+    o3dPixelData2[index] = [];
+    
+    // Calculate thickness for each slice
+    thicknessList_MPR[index] = 1; // Default thickness
+  });
+  
+  // Calculate center point and max length
+  o3dMaxLen = Math.max(series.images.length, 256);
+  o3dCenter = {
+    x: Math.floor(o3dMaxLen / 2),
+    y: Math.floor(o3dMaxLen / 2),
+    z: Math.floor(series.images.length / 2)
+  };
+  
+  // Set initial crosshair position
+  o3DPointX = o3dCenter.x;
+  o3DPointY = o3dCenter.y;
+  
+  mprState.center = o3dCenter;
+  mprState.maxLength = o3dMaxLen;
+}
+
+
+// Enhanced crosshair drawing from library
+function drawCrosshairs() {
+  Object.entries(mprState.viewports).forEach(([orientation, element]) => {
+    if (!element) return;
+    
+    // Remove existing crosshairs
+    const existingCrosshairs = element.querySelectorAll('.mpr-crosshair');
+    existingCrosshairs.forEach(ch => ch.remove());
+    
+    // Draw new crosshairs
+    const crosshairContainer = document.createElement('div');
+    crosshairContainer.className = 'mpr-crosshair';
+    crosshairContainer.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 5;
+    `;
+    
+    // Calculate crosshair position based on orientation
+    let crosshairX, crosshairY;
+    if (orientation === 'axial') {
+      crosshairX = (o3DPointX / o3dMaxLen) * 100;
+      crosshairY = (o3DPointY / o3dMaxLen) * 100;
+    } else if (orientation === 'sagittal') {
+      crosshairX = (buffer_mpr_X / element.clientWidth) * 100;
+      crosshairY = (mprState.currentImageIndex / mprState.currentSeries.images.length) * 100;
+    } else if (orientation === 'coronal') {
+      crosshairX = (o3DPointX / o3dMaxLen) * 100;
+      crosshairY = (mprState.currentImageIndex / mprState.currentSeries.images.length) * 100;
+    }
+    
+    // Create horizontal and vertical lines
+    const hLine = document.createElement('div');
+    hLine.style.cssText = `
+      position: absolute;
+      top: ${crosshairY}%;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      background: #00ff00;
+      box-shadow: 0 0 2px rgba(0,255,0,0.8);
+    `;
+    
+    const vLine = document.createElement('div');
+    vLine.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: ${crosshairX}%;
+      width: 1px;
+      height: 100%;
+      background: #00ff00;
+      box-shadow: 0 0 2px rgba(0,255,0,0.8);
+    `;
+    
+    crosshairContainer.appendChild(hLine);
+    crosshairContainer.appendChild(vLine);
+    element.appendChild(crosshairContainer);
+  });
+}
+
+// Update crosshair position from click
+function updateCrosshairFromClick(orientation, imageX, imageY) {
+  if (orientation === 'axial') {
+    o3DPointX = Math.floor((imageX / 512) * o3dMaxLen);
+    o3DPointY = Math.floor((imageY / 512) * o3dMaxLen);
+  } else if (orientation === 'sagittal') {
+    buffer_mpr_X = imageX;
+    // Update Z position based on Y click
+    const newZ = Math.floor((imageY / 512) * mprState.currentSeries.images.length);
+    mprState.currentImageIndex = Math.max(0, Math.min(mprState.currentSeries.images.length - 1, newZ));
+  } else if (orientation === 'coronal') {
+    o3DPointX = Math.floor((imageX / 512) * o3dMaxLen);
+    // Update Z position based on Y click
+    const newZ = Math.floor((imageY / 512) * mprState.currentSeries.images.length);
+    mprState.currentImageIndex = Math.max(0, Math.min(mprState.currentSeries.images.length - 1, newZ));
+  }
+  
+  // Sync all viewports and redraw crosshairs
+  syncMPRViewportsFromLibrary(orientation, mprState.currentImageIndex);
+  drawCrosshairs();
+}
+
+// Update crosshair position function - Add this to your script
+function updateCrosshairPosition(x, y, z) {
+  console.log('Updating crosshair position:', { x, y, z });
+  
+  // Update global crosshair coordinates
+  o3DPointX = x;
+  o3DPointY = y;
+  mprState.currentImageIndex = z;
+  
+  // Update mprState crosshair object
+  mprState.crosshair.x = x;
+  mprState.crosshair.y = y;
+  mprState.crosshair.z = z;
+  
+  // Only update if MPR is active
+  if (!mprState.isActive) return;
+  
+  // Redraw crosshairs on all viewports
+  drawCrosshairs();
+  
+  // Update position labels on each viewport
+  Object.entries(mprState.viewports).forEach(([orientation, element]) => {
+    if (element && element._updatePosition) {
+      element._updatePosition();
+    }
+  });
+  
+  // Update any additional UI elements that show position info
+  updateMPRPositionDisplay();
+}
+
+// Additional helper function to update position displays
+function updateMPRPositionDisplay() {
+  // Update position labels in MPR viewports
+  const axialLabel = document.querySelector('#mprAxial .mpr-position-label');
+  const sagittalLabel = document.querySelector('#mprSagittal .mpr-position-label');
+  const coronalLabel = document.querySelector('#mprCoronal .mpr-position-label');
+  
+  if (axialLabel) {
+    axialLabel.textContent = `Z: ${mprState.currentImageIndex + 1}/${mprState.currentSeries?.images?.length || 0}`;
+  }
+  
+  if (sagittalLabel) {
+    sagittalLabel.textContent = `X: ${o3DPointX}/${o3dMaxLen}`;
+  }
+  
+  if (coronalLabel) {
+    coronalLabel.textContent = `Y: ${o3DPointY}/${o3dMaxLen}`;
+  }
+  
+  console.log('MPR position updated:', {
+    x: o3DPointX,
+    y: o3DPointY,
+    z: mprState.currentImageIndex,
+    maxLen: o3dMaxLen
+  });
+}
+
+// Enhanced crosshair centering from library
+function centerCrosshairToVolume() {
+  if (!mprState.isActive) return;
+  
+  const series = mprState.currentSeries;
+  
+  // Center crosshair using library logic
+  o3DPointX = o3dCenter.x;
+  o3DPointY = o3dCenter.y;
+  mprState.currentImageIndex = o3dCenter.z;
+  
+  // Reset buffer positions
+  buffer_mpr_X = 0;
+  buffer_mpr_Y = 0;
+  
+  // Update all viewports
+  Object.entries(mprState.viewports).forEach(([orientation, element]) => {
+    if (element) {
+      const centerIndex = orientation === 'axial' ? o3dCenter.z : 
+                         orientation === 'sagittal' ? o3dCenter.x : 
+                         o3dCenter.y;
+      loadEnhancedMPRImage(element, Math.min(centerIndex, series.images.length - 1), orientation);
+    }
+  });
+  
+  // Redraw crosshairs
+  drawCrosshairs();
+  
+  console.log("MPR crosshair centered using library logic");
+}
+
+function addEnhancedMPRLabels() {
+  const viewports = ['mprAxial', 'mprSagittal', 'mprCoronal'];
+  const labels = ['Axial', 'Sagittal', 'Coronal'];
+  
+  viewports.forEach((viewportId, index) => {
+    const element = document.getElementById(viewportId);
+    if (element) {
+      // Remove existing label
+      const existingLabel = element.querySelector('.mpr-label');
+      if (existingLabel) existingLabel.remove();
+      
+      // Add enhanced label with position info
+      const label = document.createElement('div');
+      label.className = 'mpr-label';
+      label.textContent = labels[index];
+      label.style.cssText = `
+        position: absolute;
+        top: 5px;
+        left: 5px;
+        background: rgba(0,0,0,0.8);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        z-index: 10;
+        border: 1px solid #00ff00;
+      `;
+      element.appendChild(label);
+      
+      // Add position info label
+      const positionLabel = document.createElement('div');
+      positionLabel.className = 'mpr-position-label';
+      positionLabel.style.cssText = `
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        background: rgba(0,0,0,0.8);
+        color: #00ff00;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        z-index: 10;
+        font-family: monospace;
+      `;
+      
+      // Update position based on orientation
+      const updatePosition = () => {
+        if (labels[index] === 'Axial') {
+          positionLabel.textContent = `Z: ${mprState.currentImageIndex + 1}/${mprState.currentSeries?.images?.length || 0}`;
+        } else if (labels[index] === 'Sagittal') {
+          positionLabel.textContent = `X: ${o3DPointX}/${o3dMaxLen}`;
+        } else {
+          positionLabel.textContent = `Y: ${o3DPointY}/${o3dMaxLen}`;
+        }
+      };
+      
+      updatePosition();
+      element.appendChild(positionLabel);
+      
+      // Store update function for later use
+      element._updatePosition = updatePosition;
+    }
+  });
+}
+
+function deactivateMPR3D() {
+  if (!mprState.isActive) return;
+  
+  // Set global flags
+  openMPR = false;
+  openMPR2 = false;
+  
+  // Clean up pixel data arrays
+  o3dPixelData = [];
+  o3dPixelData2 = [];
+  o3dImage = [];
+  thicknessList_MPR = [];
+  
+  // Disable cornerstone on MPR elements and clean up
+  Object.values(mprState.viewports).forEach(element => {
+    if (element) {
       try {
-        cornerstoneTools.clearToolState(element, "stack");
+        // Remove all event handlers
+        if (element._mprScrollHandler) {
+          element.removeEventListener('wheel', element._mprScrollHandler);
+          delete element._mprScrollHandler;
+        }
+        if (element._mprClickHandler) {
+          element.removeEventListener('click', element._mprClickHandler);
+          delete element._mprClickHandler;
+        }
+        if (element._mprMoveHandler) {
+          element.removeEventListener('mousemove', element._mprMoveHandler);
+          delete element._mprMoveHandler;
+        }
+        
+        // Remove crosshairs
+        const crosshairs = element.querySelectorAll('.mpr-crosshair');
+        crosshairs.forEach(ch => ch.remove());
+        
+        // Remove labels
+        const labels = element.querySelectorAll('.mpr-label, .mpr-position-label');
+        labels.forEach(label => label.remove());
+        
+        // Disable cornerstone
+        cornerstone.disable(element);
       } catch (e) {
-        // Ignore tool cleanup errors
+        console.log("Element cleanup error:", e);
       }
-    }
-
-    // Disable cornerstone
-    const enabledElements = cornerstone.getEnabledElements();
-    const enabledElement = enabledElements.find((e) => e.element === element);
-
-    if (enabledElement) {
-      cornerstone.disable(element);
-    }
-
-    // Clear DOM content
-    while (element.firstChild) {
-      element.removeChild(element.firstChild);
-    }
-
-    // Reset styling
-    element.style.borderColor = "#374151";
-    element.style.cursor = "default";
-
-    // Small delay to ensure cleanup
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-  } catch (error) {
-    console.warn("Error during viewport cleanup:", error);
-  }
-}
-
-// FIXED: Generate reformatted images with correct orientation and pixel ordering
-async function generateReformattedImages() {
-  const { width, height, depth } = mprState.dimensions;
-
-  updateStatus("Generating sagittal reconstructions...");
-
-  // Generate sagittal slices (YZ plane) - FIXED orientation
-  mprState.imageData.sagittal = [];
-  for (let x = 0; x < width; x++) {
-    const sagittalData = new Uint16Array(height * depth);
-
-    for (let z = 0; z < depth; z++) {
-      const sourceImage = mprState.volumeData[z];
-      const sourcePixelData = sourceImage.getPixelData();
-
-      for (let y = 0; y < height; y++) {
-        const sourceIndex = y * width + x;
-        // FIXED: Proper orientation for sagittal view (YZ plane, looking from right side)
-        // Flip Z axis so superior is up, and maintain Y axis orientation
-        const targetIndex = (depth - 1 - z) * height + y;
-        sagittalData[targetIndex] = sourcePixelData[sourceIndex];
-      }
-    }
-
-    mprState.imageData.sagittal.push(sagittalData);
-
-    // Progress update every 20 slices
-    if (x % 20 === 0) {
-      updateStatus(`Generating sagittal ${x + 1}/${width}...`);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-  }
-
-  updateStatus("Generating coronal reconstructions...");
-
-  // Generate coronal slices (XZ plane) - FIXED orientation
-  mprState.imageData.coronal = [];
-  for (let y = 0; y < height; y++) {
-    const coronalData = new Uint16Array(width * depth);
-
-    for (let z = 0; z < depth; z++) {
-      const sourceImage = mprState.volumeData[z];
-      const sourcePixelData = sourceImage.getPixelData();
-
-      for (let x = 0; x < width; x++) {
-        // FIXED: Use proper Y index (from anterior/posterior)
-        const sourceIndex = (height - 1 - y) * width + x;
-        // FIXED: Proper orientation for coronal view (XZ plane, looking from front)
-        // Flip Z axis so superior is up
-        const targetIndex = (depth - 1 - z) * width + x;
-        coronalData[targetIndex] = sourcePixelData[sourceIndex];
-      }
-    }
-
-    mprState.imageData.coronal.push(coronalData);
-
-    // Progress update every 20 slices
-    if (y % 20 === 0) {
-      updateStatus(`Generating coronal ${y + 1}/${height}...`);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-  }
-
-  updateStatus("MPR reconstruction complete");
-}
-
-// FIXED: Create synthetic images with proper cornerstone compatibility
-function createSyntheticImage(
-  pixelData,
-  width,
-  height,
-  referenceImage,
-  orientation
-) {
-  if (!pixelData || pixelData.length === 0) {
-    throw new Error("Invalid pixel data for synthetic image");
-  }
-
-  if (pixelData.length !== width * height) {
-    throw new Error(
-      `Pixel data size mismatch: expected ${width * height}, got ${
-        pixelData.length
-      }`
-    );
-  }
-
-  // Create a proper image object that cornerstone can handle
-  const syntheticImage = {
-    imageId: `synthetic://mpr/${orientation}/${Date.now()}/${Math.random()}`,
-    minPixelValue: referenceImage.minPixelValue || 0,
-    maxPixelValue: referenceImage.maxPixelValue || 4095,
-    slope: referenceImage.slope || 1,
-    intercept: referenceImage.intercept || 0,
-    windowCenter:
-      referenceImage.windowCenter || (referenceImage.maxPixelValue || 2048) / 2,
-    windowWidth:
-      referenceImage.windowWidth || referenceImage.maxPixelValue || 4095,
-    getPixelData: () => pixelData,
-    rows: height,
-    columns: width,
-    height: height,
-    width: width,
-    color: false,
-    columnPixelSpacing: mprState.spacing.x,
-    rowPixelSpacing:
-      orientation === "sagittal"
-        ? mprState.spacing.z
-        : orientation === "coronal"
-        ? mprState.spacing.z
-        : mprState.spacing.y,
-    invert: false,
-    sizeInBytes: pixelData.length * 2,
-    // Essential properties for cornerstone compatibility
-    cachedLut: undefined,
-    rgba: false,
-    photometricInterpretation:
-      referenceImage.photometricInterpretation || "MONOCHROME2",
-    planarConfiguration: 0,
-    samplesPerPixel: 1,
-    pixelRepresentation: referenceImage.pixelRepresentation || 0,
-    bitsAllocated: referenceImage.bitsAllocated || 16,
-    bitsStored: referenceImage.bitsStored || 16,
-    highBit: referenceImage.highBit || 15,
-    pixelPaddingValue: referenceImage.pixelPaddingValue,
-  };
-
-  return syntheticImage;
-}
-
-// Complete renderMPRViews function - FIXED VERSION
-async function renderMPRViews() {
-  // Validate volume data first
-  if (!mprState.volumeData) {
-    throw new Error("No volume data available - mprState.volumeData is null");
-  }
-
-  if (!Array.isArray(mprState.volumeData)) {
-    throw new Error("Volume data is not an array");
-  }
-
-  if (mprState.volumeData.length === 0) {
-    throw new Error("Volume data array is empty");
-  }
-
-  console.log(`Rendering MPR views with ${mprState.volumeData.length} volume images`);
-
-  const { width, height, depth } = mprState.dimensions;
-  
-  if (!width || !height || !depth) {
-    throw new Error("Invalid dimensions: " + JSON.stringify(mprState.dimensions));
-  }
-
-  const { x, y, z } = mprState.crosshairPosition;
-  const referenceImage = mprState.volumeData[0];
-
-  if (!referenceImage) {
-    throw new Error("First volume image is null or undefined");
-  }
-
-  // Calculate slice indices with proper bounds checking
-  const axialIndex = Math.max(0, Math.min(depth - 1, Math.floor(z * depth)));
-  const sagittalIndex = Math.max(0, Math.min(width - 1, Math.floor(x * width)));
-  const coronalIndex = Math.max(0, Math.min(height - 1, Math.floor(y * height)));
-
-  // Update current slice tracking
-  mprState.currentSlices = {
-    axial: axialIndex,
-    sagittal: sagittalIndex,
-    coronal: coronalIndex,
-  };
-
-  try {
-    // Generate reformatted images if not done yet
-    if (
-      mprState.imageData.sagittal.length === 0 ||
-      mprState.imageData.coronal.length === 0
-    ) {
-      await generateReformattedImages();
-    }
-
-    // Render axial view (original images)
-    if (mprState.viewports.axial && mprState.volumeData[axialIndex]) {
-      const axialImage = mprState.volumeData[axialIndex];
-      await cornerstone.displayImage(mprState.viewports.axial, axialImage);
-      updateSliceInfo("axial", axialIndex + 1, depth);
-    }
-
-    // Render sagittal view with caching
-    if (mprState.viewports.sagittal && sagittalIndex < mprState.imageData.sagittal.length) {
-      const cacheKey = `sagittal_${sagittalIndex}`;
-      let sagittalImage = mprState.cachedImages.sagittal.get(cacheKey);
-
-      if (!sagittalImage) {
-        const sagittalPixelData = mprState.imageData.sagittal[sagittalIndex];
-        if (sagittalPixelData && sagittalPixelData.length > 0) {
-          sagittalImage = createSyntheticImage(
-            sagittalPixelData,
-            height, // width of sagittal view
-            depth,  // height of sagittal view
-            referenceImage,
-            "sagittal"
-          );
-          mprState.cachedImages.sagittal.set(cacheKey, sagittalImage);
-        }
-      }
-
-      if (sagittalImage) {
-        await cornerstone.displayImage(mprState.viewports.sagittal, sagittalImage);
-        updateSliceInfo("sagittal", sagittalIndex + 1, width);
-      }
-    }
-
-    // Render coronal view with caching
-    if (mprState.viewports.coronal && coronalIndex < mprState.imageData.coronal.length) {
-      const cacheKey = `coronal_${coronalIndex}`;
-      let coronalImage = mprState.cachedImages.coronal.get(cacheKey);
-
-      if (!coronalImage) {
-        const coronalPixelData = mprState.imageData.coronal[coronalIndex];
-        if (coronalPixelData && coronalPixelData.length > 0) {
-          coronalImage = createSyntheticImage(
-            coronalPixelData,
-            width, // width of coronal view
-            depth, // height of coronal view
-            referenceImage,
-            "coronal"
-          );
-          mprState.cachedImages.coronal.set(cacheKey, coronalImage);
-        }
-      }
-
-      if (coronalImage) {
-        await cornerstone.displayImage(mprState.viewports.coronal, coronalImage);
-        updateSliceInfo("coronal", coronalIndex + 1, height);
-      }
-    }
-
-    // Update crosshairs after successful rendering
-    updateAllCrosshairs();
-
-    // Update position display
-    updateMPRPosition();
-
-  } catch (error) {
-    console.error("Error rendering MPR views:", error);
-    throw new Error("Failed to render MPR views: " + error.message);
-  }
-}
-
-// Helper functions for getting sagittal and coronal images
-async function getSagittalImage(sagittalIndex, referenceImage) {
-  const cacheKey = `sagittal_${sagittalIndex}`;
-  let sagittalImage = mprState.cachedImages.sagittal.get(cacheKey);
-
-  if (!sagittalImage && sagittalIndex < mprState.imageData.sagittal.length) {
-    const sagittalPixelData = mprState.imageData.sagittal[sagittalIndex];
-    if (sagittalPixelData && sagittalPixelData.length > 0) {
-      const { height, depth } = mprState.dimensions;
-      sagittalImage = createSyntheticImage(
-        sagittalPixelData,
-        height, // width of sagittal view
-        depth,  // height of sagittal view
-        referenceImage,
-        "sagittal"
-      );
-      mprState.cachedImages.sagittal.set(cacheKey, sagittalImage);
-    }
-  }
-
-  return sagittalImage;
-}
-
-async function getCoronalImage(coronalIndex, referenceImage) {
-  const cacheKey = `coronal_${coronalIndex}`;
-  let coronalImage = mprState.cachedImages.coronal.get(cacheKey);
-
-  if (!coronalImage && coronalIndex < mprState.imageData.coronal.length) {
-    const coronalPixelData = mprState.imageData.coronal[coronalIndex];
-    if (coronalPixelData && coronalPixelData.length > 0) {
-      const { width, depth } = mprState.dimensions;
-      coronalImage = createSyntheticImage(
-        coronalPixelData,
-        width, // width of coronal view
-        depth, // height of coronal view
-        referenceImage,
-        "coronal"
-      );
-      mprState.cachedImages.coronal.set(cacheKey, coronalImage);
-    }
-  }
-
-  return coronalImage;
-}
-
-// Helper function to render individual viewport
-async function renderViewportImage(viewport, image, plane, currentSlice, totalSlices) {
-  if (!viewport || !image) return;
-
-  try {
-    // Ensure viewport is properly sized
-    cornerstone.resize(viewport, true);
-    
-    // Display the image
-    await cornerstone.displayImage(viewport, image);
-    
-    // Get default viewport for proper scaling
-    const defaultViewport = cornerstone.getDefaultViewportForImage(viewport, image);
-    cornerstone.setViewport(viewport, defaultViewport);
-    
-    // Update slice info
-    updateSliceInfo(plane, currentSlice, totalSlices);
-    
-  } catch (error) {
-    console.error(`Error rendering ${plane} viewport:`, error);
-  }
-}
-
-// Update slice information display
-function updateSliceInfo(plane, currentSlice, totalSlices) {
-  const sliceInfoEl = document.getElementById(`${plane}SliceInfo`);
-  if (sliceInfoEl) {
-    sliceInfoEl.textContent = `Slice: ${currentSlice}/${totalSlices}`;
-  }
-}
-
-// Update MPR position display
-function updateMPRPosition() {
-  const positionEl = document.getElementById("mprPosition");
-  if (positionEl) {
-    const pos = mprState.crosshairPosition;
-    const { width, height, depth } = mprState.dimensions;
-    const realPos = {
-      x: (pos.x * width).toFixed(1),
-      y: (pos.y * height).toFixed(1),
-      z: (pos.z * depth).toFixed(1),
-    };
-    positionEl.textContent = `Position: (${realPos.x}, ${realPos.y}, ${realPos.z})`;
-  }
-}
-
-// Enhanced viewport interaction with better coordinate handling
-function setupMPRSynchronization() {
-  // Clean up existing event listeners first
-  Object.values(mprState.viewports).forEach((viewport) => {
-    if (viewport) {
-      ["click", "mouseenter", "mouseleave"].forEach((eventType) => {
-        const handlerName = `_mpr${
-          eventType.charAt(0).toUpperCase() + eventType.slice(1)
-        }Handler`;
-        if (viewport[handlerName]) {
-          viewport.removeEventListener(eventType, viewport[handlerName]);
-          viewport[handlerName] = null;
-        }
-      });
     }
   });
-
-  // Add interaction handlers for each viewport
-  setupViewportInteraction(mprState.viewports.axial, "axial");
-  setupViewportInteraction(mprState.viewports.sagittal, "sagittal");
-  setupViewportInteraction(mprState.viewports.coronal, "coronal");
+  
+  // Hide MPR container and show 2D viewer
+  document.getElementById("mprContainer").style.display = "none";
+  document.getElementById("viewportContainer").style.display = "block";
+  
+  // Reset state
+  mprState.isActive = false;
+  mprState.viewports = { axial: null, sagittal: null, coronal: null };
+  
+  // Reset library variables
+  o3DPointX = 0;
+  o3DPointY = 0;
+  buffer_mpr_X = 0;
+  buffer_mpr_Y = 0;
+  
+  console.log("Enhanced MPR deactivated");
 }
 
-// FIXED: Viewport interaction with proper coordinate mapping for each plane
-function setupViewportInteraction(viewport, plane) {
-  if (!viewport) return;
 
-  const clickHandler = (event) => {
-    event.preventDefault();
 
-    const rect = viewport.getBoundingClientRect();
-    const clickX = Math.max(
-      0,
-      Math.min(1, (event.clientX - rect.left) / rect.width)
-    );
-    const clickY = Math.max(
-      0,
-      Math.min(1, (event.clientY - rect.top) / rect.height)
-    );
 
-    // Update crosshair position based on which plane was clicked
-    // Coordinate system: x = left-right, y = anterior-posterior, z = superior-inferior
-    switch (plane) {
-      case "axial":
-        // Axial view shows XY plane (looking down from superior)
-        mprState.crosshairPosition.x = clickX;
-        mprState.crosshairPosition.y = clickY;
-        break;
-      case "sagittal":
-        // Sagittal view shows YZ plane (looking from right side)
-        // clickX corresponds to Y (anterior-posterior)
-        // clickY corresponds to Z (superior-inferior, flipped)
-        mprState.crosshairPosition.y = clickX;
-        mprState.crosshairPosition.z = 1.0 - clickY; // Flip for proper orientation
-        break;
-      case "coronal":
-        // Coronal view shows XZ plane (looking from front)
-        // clickX corresponds to X (left-right)
-        // clickY corresponds to Z (superior-inferior, flipped)
-        mprState.crosshairPosition.x = clickX;
-        mprState.crosshairPosition.z = 1.0 - clickY; // Flip for proper orientation
-        break;
+function setupMPRViewports() {
+  const series = mprState.currentSeries;
+  const totalImages = series.images.length;
+  const middleIndex = Math.floor(totalImages / 2);
+  
+  // Calculate indices for different views
+  const axialIndex = mprState.currentImageIndex;
+  const sagittalIndex = Math.min(middleIndex, totalImages - 1);
+  const coronalIndex = Math.max(0, Math.floor(totalImages * 0.3));
+  
+  // Setup Axial view (current slice)
+  const axialElement = document.getElementById("mprAxial");
+  const sagittalElement = document.getElementById("mprSagittal");
+  const coronalElement = document.getElementById("mprCoronal");
+  
+  // Add labels to viewports
+  addMPRLabels();
+  
+  // Enable cornerstone on all elements
+  try {
+    cornerstone.enable(axialElement);
+    cornerstone.enable(sagittalElement);
+    cornerstone.enable(coronalElement);
+  } catch (e) {
+    // Elements might already be enabled
+  }
+  
+  // Load images into viewports
+  Promise.all([
+    cornerstone.loadImage(series.images[axialIndex].imageId),
+    cornerstone.loadImage(series.images[sagittalIndex].imageId),
+    cornerstone.loadImage(series.images[coronalIndex].imageId)
+  ]).then(([axialImage, sagittalImage, coronalImage]) => {
+    
+    // Display images
+    cornerstone.displayImage(axialElement, axialImage);
+    cornerstone.displayImage(sagittalElement, sagittalImage);
+    cornerstone.displayImage(coronalElement, coronalImage);
+    
+    // Store viewport references
+    mprState.viewports.axial = axialElement;
+    mprState.viewports.sagittal = sagittalElement;
+    mprState.viewports.coronal = coronalElement;
+    
+    // Setup cross-references and sync
+    setupMPRSync();
+    
+  }).catch(error => {
+    console.error('Error loading MPR images:', error);
+  });
+}
+
+function addMPRLabels() {
+  // Add labels to each viewport
+  const viewports = ['mprAxial', 'mprSagittal', 'mprCoronal'];
+  const labels = ['Axial', 'Sagittal', 'Coronal'];
+  
+  viewports.forEach((viewportId, index) => {
+    const element = document.getElementById(viewportId);
+    if (element) {
+      // Remove existing label
+      const existingLabel = element.querySelector('.mpr-label');
+      if (existingLabel) existingLabel.remove();
+      
+      // Add new label
+      const label = document.createElement('div');
+      label.className = 'mpr-label';
+      label.textContent = labels[index];
+      label.style.cssText = `
+        position: absolute;
+        top: 5px;
+        left: 5px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        z-index: 10;
+      `;
+      element.appendChild(label);
     }
-
-    // Clamp values to [0,1] range
-    mprState.crosshairPosition.x = Math.max(
-      0,
-      Math.min(1, mprState.crosshairPosition.x)
-    );
-    mprState.crosshairPosition.y = Math.max(
-      0,
-      Math.min(1, mprState.crosshairPosition.y)
-    );
-    mprState.crosshairPosition.z = Math.max(
-      0,
-      Math.min(1, mprState.crosshairPosition.z)
-    );
-
-    // Re-render all views
-    renderMPRViews().catch((error) => {
-      console.error("Error re-rendering MPR views:", error);
-      showError("Error updating MPR views: " + error.message);
-    });
-  };
-
-  const mouseEnterHandler = () => {
-    viewport.style.borderColor = "#00ff00";
-    viewport.style.borderWidth = "2px";
-  };
-
-  const mouseLeaveHandler = () => {
-    viewport.style.borderColor = "#374151";
-    viewport.style.borderWidth = "2px";
-  };
-
-  // Store handlers for cleanup
-  viewport._mprClickHandler = clickHandler;
-  viewport._mprMouseEnterHandler = mouseEnterHandler;
-  viewport._mprMouseLeaveHandler = mouseLeaveHandler;
-
-  // Add event listeners
-  viewport.addEventListener("click", clickHandler);
-  viewport.addEventListener("mouseenter", mouseEnterHandler);
-  viewport.addEventListener("mouseleave", mouseLeaveHandler);
-
-  viewport.style.cursor = "crosshair";
+  });
 }
 
-// Enhanced crosshair rendering
-function updateAllCrosshairs() {
-  updateCrosshairForViewport(mprState.viewports.axial, "axial");
-  updateCrosshairForViewport(mprState.viewports.sagittal, "sagittal");
-  updateCrosshairForViewport(mprState.viewports.coronal, "coronal");
-}
-
-// FIXED: Crosshair positioning with proper coordinate mapping
-function updateCrosshairForViewport(viewport, plane) {
-  if (!viewport) return;
-
-  // Remove existing crosshairs
-  const existingCrosshairs = viewport.querySelectorAll(".mpr-crosshair");
-  existingCrosshairs.forEach((el) => el.remove());
-
-  // Create new crosshair container
-  const crosshairContainer = document.createElement("div");
-  crosshairContainer.className = "mpr-crosshair";
-  crosshairContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: 10;
-  `;
-
-  const hLine = document.createElement("div");
-  const vLine = document.createElement("div");
-
-  const crosshairStyle = `
-    position: absolute;
-    background: #00ff00;
-    box-shadow: 0 0 3px rgba(0, 255, 0, 0.8), inset 0 0 3px rgba(0, 255, 0, 0.4);
-    opacity: 0.9;
-  `;
-
-  hLine.style.cssText =
-    crosshairStyle +
-    `
-    height: 1px;
-    width: 100%;
-    left: 0;
-  `;
-
-  vLine.style.cssText =
-    crosshairStyle +
-    `
-    width: 1px;
-    height: 100%;
-    top: 0;
-  `;
-
-  // FIXED: Position crosshairs based on current position and plane
-  const { x, y, z } = mprState.crosshairPosition;
-
-  switch (plane) {
-    case "axial":
-      // Axial: X-Y plane
-      hLine.style.top = `${y * 100}%`;
-      vLine.style.left = `${x * 100}%`;
-      break;
-    case "sagittal":
-      // Sagittal: Y-Z plane (from right side view)
-      hLine.style.top = `${(1.0 - z) * 100}%`; // Z flipped (superior at top)
-      vLine.style.left = `${y * 100}%`; // Y normal (anterior-posterior)
-      break;
-    case "coronal":
-      // Coronal: X-Z plane (from front view)
-      hLine.style.top = `${(1.0 - z) * 100}%`; // Z flipped (superior at top)
-      vLine.style.left = `${x * 100}%`; // X normal (left-right)
-      break;
-  }
-
-  crosshairContainer.appendChild(hLine);
-  crosshairContainer.appendChild(vLine);
-
-  // Ensure viewport has relative positioning
-  if (viewport.style.position !== "relative") {
-    viewport.style.position = "relative";
-  }
-  viewport.appendChild(crosshairContainer);
-}
-
-// Enhanced viewport labeling
-function addViewportLabel(viewport, label, color = "#00ff00") {
-  // Remove existing labels
-  const existingLabels = viewport.querySelectorAll(".mpr-viewport-label");
-  existingLabels.forEach((el) => el.remove());
-
-  const labelEl = document.createElement("div");
-  labelEl.className = "mpr-viewport-label";
-  labelEl.textContent = label;
-  labelEl.style.cssText = `
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(0, 0, 0, 0.8);
-    color: ${color};
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: bold;
-    z-index: 15;
-    pointer-events: none;
-    border: 1px solid ${color};
-    font-family: monospace;
-    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-  `;
-
-  if (viewport.style.position !== "relative") {
-    viewport.style.position = "relative";
-  }
-  viewport.appendChild(labelEl);
-}
-
-// Enhanced MPR controls setup
-function setupMPRControls() {
-  const resetBtn = document.getElementById("mprResetBtn");
-  const syncBtn = document.getElementById("mprSyncBtn");
-  const exitBtn = document.getElementById("mprExitBtn");
-
-  if (resetBtn) {
-    resetBtn.onclick = () => {
-      mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-      if (mprState.isActive) {
-        renderMPRViews().catch((err) => {
-          console.error("Error resetting MPR:", err);
-        });
+function setupMPRSync() {
+  const series = mprState.currentSeries;
+  
+  // Add scroll functionality to navigate through slices
+  Object.values(mprState.viewports).forEach((element, index) => {
+    if (!element) return;
+    
+    // Remove existing scroll listener
+    if (element._mprScrollHandler) {
+      element.removeEventListener('wheel', element._mprScrollHandler);
+    }
+    
+    element._mprScrollHandler = function(event) {
+      event.preventDefault();
+      
+      const viewportNames = ['axial', 'sagittal', 'coronal'];
+      const currentViewport = viewportNames[index];
+      
+      // Calculate new slice index
+      let newIndex = mprState.currentImageIndex;
+      if (event.deltaY > 0) {
+        newIndex = Math.min(series.images.length - 1, newIndex + 1);
+      } else {
+        newIndex = Math.max(0, newIndex - 1);
+      }
+      
+      if (newIndex !== mprState.currentImageIndex) {
+        mprState.currentImageIndex = newIndex;
+        updateMPRSlice(currentViewport, newIndex);
       }
     };
-  }
+    
+    element.addEventListener('wheel', element._mprScrollHandler);
+  });
+}
 
+function updateMPRSlice(changedViewport, newIndex) {
+  const series = mprState.currentSeries;
+  const imageId = series.images[newIndex].imageId;
+  
+  // Update the viewport that changed
+  const element = mprState.viewports[changedViewport];
+  if (element) {
+    cornerstone.loadImage(imageId).then(image => {
+      cornerstone.displayImage(element, image);
+    });
+  }
+  
+  // Optionally sync with other viewports (simplified)
+  if (mprState.syncEnabled && changedViewport === 'axial') {
+    // Update main 2D viewer index as well
+    currentImageIndex = newIndex;
+  }
+}
+
+
+
+
+function syncMPRViewports() {
+  mprState.syncEnabled = !mprState.syncEnabled;
+  
+  const syncBtn = document.getElementById('mprSyncBtn');
   if (syncBtn) {
-    syncBtn.onclick = () => {
-      // Synchronize window/level across all MPR views
-      synchronizeWindowLevel();
-    };
-  }
-
-  if (exitBtn) {
-    exitBtn.onclick = () => {
-      deactivateMPR();
-    };
-  }
-}
-
-// Synchronize window/level across MPR viewports
-function synchronizeWindowLevel() {
-  if (!mprState.isActive) return;
-
-  try {
-    // Get viewport from axial (reference)
-    const axialViewport = mprState.viewports.axial;
-    if (!axialViewport) return;
-
-    const viewport = cornerstone.getViewport(axialViewport);
-    if (!viewport || !viewport.voi) return;
-
-    const windowCenter = viewport.voi.windowCenter;
-    const windowWidth = viewport.voi.windowWidth;
-
-    // Apply to sagittal and coronal viewports
-    [mprState.viewports.sagittal, mprState.viewports.coronal].forEach((vp) => {
-      if (
-        vp &&
-        cornerstone.getEnabledElements().some((e) => e.element === vp)
-      ) {
-        try {
-          const currentViewport = cornerstone.getViewport(vp);
-          currentViewport.voi.windowCenter = windowCenter;
-          currentViewport.voi.windowWidth = windowWidth;
-          cornerstone.setViewport(vp, currentViewport);
-        } catch (e) {
-          console.warn("Error syncing viewport:", e);
-        }
-      }
-    });
-
-    showSuccess("Window/Level synchronized");
-  } catch (error) {
-    console.error("Error synchronizing window/level:", error);
-  }
-}
-
-// Comprehensive cleanup function for MPR
-async function cleanupMPR() {
-  if (!mprState.isActive && !mprState.isInitialized) return;
-
-  console.log("Cleaning up MPR state...");
-
-  try {
-    // Stop any ongoing operations
-    clearTimeout(mprState._keyboardUpdateTimeout);
-
-    // Clean up viewports more thoroughly
-    if (mprState.viewports) {
-      for (const [plane, viewport] of Object.entries(mprState.viewports)) {
-        if (viewport) {
-          await cleanupViewport(viewport);
-        }
-      }
-    }
-
-    // Clear all cached data
-    mprState.cachedImages.sagittal.clear();
-    mprState.cachedImages.coronal.clear();
-
-    // Reset state completely
-    mprState.isActive = false;
-    mprState.isInitialized = false;
-    mprState.volumeData = null;
-    mprState.imageData = { axial: [], sagittal: [], coronal: [] };
-    mprState.viewports = { axial: null, sagittal: null, coronal: null };
-    mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-    mprState.currentSlices = { axial: 0, sagittal: 0, coronal: 0 };
-    mprState.dimensions = null;
-    mprState.spacing = null;
-
-    // Force garbage collection
-    if (window.gc) {
-      window.gc();
-    }
-
-    console.log("MPR cleanup completed");
-  } catch (error) {
-    console.error("Error during MPR cleanup:", error);
-  }
-}
-
-// Enhanced deactivation with thorough cleanup
-async function deactivateMPR() {
-  const container = document.getElementById("mprContainer");
-  const normalViewport = document.getElementById("viewportContainer");
-  const dicomImage = document.getElementById("dicomImage");
-
-  showLoading(true, "Exiting MPR mode...");
-
-  try {
-    // Perform comprehensive cleanup
-    await cleanupMPR();
-
-    // Hide MPR container
-    if (container) container.style.display = "none";
-
-    // Show normal view
-    if (normalViewport) normalViewport.style.display = "block";
-    if (dicomImage) dicomImage.style.display = "block";
-
-    // Restore the current image in normal view if available
-    if (
-      currentSeriesId &&
-      allSeries[currentSeriesId] &&
-      currentImageIndex >= 0
-    ) {
-      const series = allSeries[currentSeriesId];
-      if (series.images[currentImageIndex]) {
-        // Ensure cornerstone is enabled on the main viewport
-        const mainViewport = getActiveElement();
-        if (mainViewport) {
-          ensureEnabled(mainViewport);
-
-          try {
-            const imageId = series.images[currentImageIndex].imageId;
-            const image = await cornerstone.loadAndCacheImage(imageId);
-            await cornerstone.displayImage(mainViewport, image);
-            setupToolsForViewport(mainViewport);
-            updateImageInfo();
-          } catch (err) {
-            console.error("Error restoring main viewport:", err);
-          }
-        }
-      }
-    }
-
-    updateStatus("Returned to normal viewing mode");
-    showSuccess("MPR mode deactivated");
-  } catch (error) {
-    console.error("Error during MPR deactivation:", error);
-    showError("Error exiting MPR mode: " + error.message);
-  } finally {
-    showLoading(false);
-  }
-}
-
-// Enhanced keyboard controls with better responsiveness
-document.addEventListener("keydown", function (e) {
-  if (!mprState.isActive) return;
-
-  const step = 0.01; // Smaller step for smoother movement (1% instead of 2%)
-  let shouldUpdate = false;
-
-  switch (e.key.toLowerCase()) {
-    case "w": // W - move up (decrease Y)
-      e.preventDefault();
-      mprState.crosshairPosition.y = Math.max(
-        0,
-        mprState.crosshairPosition.y - step
-      );
-      shouldUpdate = true;
-      break;
-    case "s": // S - move down (increase Y)
-      e.preventDefault();
-      mprState.crosshairPosition.y = Math.min(
-        1,
-        mprState.crosshairPosition.y + step
-      );
-      shouldUpdate = true;
-      break;
-    case "a": // A - move left (decrease X)
-      e.preventDefault();
-      mprState.crosshairPosition.x = Math.max(
-        0,
-        mprState.crosshairPosition.x - step
-      );
-      shouldUpdate = true;
-      break;
-    case "d": // D - move right (increase X)
-      e.preventDefault();
-      mprState.crosshairPosition.x = Math.min(
-        1,
-        mprState.crosshairPosition.x + step
-      );
-      shouldUpdate = true;
-      break;
-    case "q": // Q - move slice up (decrease Z)
-      e.preventDefault();
-      mprState.crosshairPosition.z = Math.max(
-        0,
-        mprState.crosshairPosition.z - step
-      );
-      shouldUpdate = true;
-      break;
-    case "e": // E - move slice down (increase Z)
-      e.preventDefault();
-      mprState.crosshairPosition.z = Math.min(
-        1,
-        mprState.crosshairPosition.z + step
-      );
-      shouldUpdate = true;
-      break;
-    case "escape": // Escape - exit MPR
-      e.preventDefault();
-      deactivateMPR();
-      break;
-    case "c": // C - center crosshair
-      e.preventDefault();
-      mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-      shouldUpdate = true;
-      break;
-    case "r": // R - reset crosshair (alternative to C)
-      e.preventDefault();
-      mprState.crosshairPosition = { x: 0.5, y: 0.5, z: 0.5 };
-      shouldUpdate = true;
-      break;
-  }
-
-  if (shouldUpdate) {
-    // Debounced update to prevent too many renders
-    clearTimeout(mprState._keyboardUpdateTimeout);
-    mprState._keyboardUpdateTimeout = setTimeout(() => {
-      renderMPRViews().catch((error) => {
-        console.error("Error updating MPR views from keyboard:", error);
-      });
-    }, 16); // ~60fps
-  }
-});
-
-// Enhanced tool setup for MPR viewports
-function setupMPRTools() {
-  if (!mprState.isActive) return;
-
-  Object.entries(mprState.viewports).forEach(([plane, viewport]) => {
-    if (
-      viewport &&
-      cornerstone.getEnabledElements().some((e) => e.element === viewport)
-    ) {
-      try {
-        // Ensure tools are available
-        if (typeof cornerstoneTools === "undefined") return;
-
-        // Setup basic tools for each viewport
-        cornerstoneTools.addTool(cornerstoneTools.WwwcTool);
-        cornerstoneTools.addTool(cornerstoneTools.ZoomTool);
-        cornerstoneTools.addTool(cornerstoneTools.PanTool);
-
-        // Set active tools with different mouse buttons
-        cornerstoneTools.setToolActive(
-          "Wwwc",
-          { mouseButtonMask: 1 },
-          viewport
-        );
-        cornerstoneTools.setToolActive(
-          "Zoom",
-          { mouseButtonMask: 2 },
-          viewport
-        );
-        cornerstoneTools.setToolActive("Pan", { mouseButtonMask: 4 }, viewport);
-
-        // Add viewport change listener for real-time updates
-        const renderHandler = (e) => {
-          const eventData = e.detail;
-          if (eventData && eventData.viewport) {
-            // Optional: Update other viewports when window/level changes
-            // This can be enabled for real-time synchronization
-          }
-        };
-
-        viewport.addEventListener("cornerstoneimagerendered", renderHandler);
-
-        // Store handler for cleanup
-        if (!viewport._mprRenderHandlers) {
-          viewport._mprRenderHandlers = [];
-        }
-        viewport._mprRenderHandlers.push(renderHandler);
-      } catch (error) {
-        console.warn(`Error setting up tools for ${plane} viewport:`, error);
-      }
-    }
-  });
-}
-
-// Enhanced MPR button handler
-const mprBtn = document.getElementById("mprTool");
-if (mprBtn) {
-  mprBtn.addEventListener("click", async () => {
-    if (mprState.isActive) {
-      await deactivateMPR();
-      mprBtn.classList.remove("active");
-    } else {
-      await activateMPR();
-      mprBtn.classList.add("active");
-    }
-  });
-}
-
-// Window resize handler for MPR viewports
-window.addEventListener("resize", () => {
-  if (mprState.isActive) {
-    setTimeout(() => {
-      Object.values(mprState.viewports).forEach((viewport) => {
-        if (viewport && cornerstone.getEnabledElements().some((e) => e.element === viewport)) {
-          try {
-            cornerstone.resize(viewport, true);
-          } catch (e) {
-            console.warn("Resize failed:", e);
-          }
-        }
-      });
-    }, 100);
-  }
-});
-
-// Debug function to check MPR state
-window.debugMPRState = function() {
-  console.log("=== MPR Debug Information ===");
-  console.log("Current Series ID:", currentSeriesId);
-  console.log("All Series Keys:", Object.keys(allSeries));
-  
-  if (currentSeriesId && allSeries[currentSeriesId]) {
-    const series = allSeries[currentSeriesId];
-    console.log("Current Series:", {
-      seriesDescription: series.seriesDescription,
-      imageCount: series.images ? series.images.length : 0,
-      firstImageId: series.images && series.images[0] ? series.images[0].imageId : "none"
-    });
+    syncBtn.style.opacity = mprState.syncEnabled ? '1' : '0.5';
+    syncBtn.title = mprState.syncEnabled ? 'Sync Enabled' : 'Sync Disabled';
   }
   
-  console.log("MPR State:", {
-    isActive: mprState.isActive,
-    isInitialized: mprState.isInitialized,
-    hasVolumeData: !!mprState.volumeData,
-    volumeDataLength: mprState.volumeData ? mprState.volumeData.length : 0,
-    dimensions: mprState.dimensions,
-    spacing: mprState.spacing
-  });
-  console.log("=== End Debug Info ===");
-};
+  console.log("MPR sync:", mprState.syncEnabled ? "enabled" : "disabled");
+}
 
-// Expose MPR functions to global scope
-window.activateMPR = activateMPR;
-window.deactivateMPR = deactivateMPR;
-window.mprState = mprState;
+// Setup MPR button
+function setupMPRButton() {
+  const mprButton = document.getElementById('mprTool');
+  if (!mprButton) return;
+  
+  // Always enable since we're using 2D cornerstone
+  mprButton.addEventListener('click', activateMPR3D);
+  mprButton.title = 'MPR View (Multi-planar)';
+  mprButton.style.opacity = '1';
+  mprButton.style.background = 'rgba(59, 130, 246, 0.9)'; // Blue for working MPR
+  
+  console.log('✅ MPR enabled successfully!');
+}
+
+// Initialize MPR when DOM loads
+document.addEventListener("DOMContentLoaded", function() {
+  setupMPRButton();
+  
+  // Setup MPR control buttons
+  const mprResetBtn = document.getElementById('mprResetBtn');
+  const mprSyncBtn = document.getElementById('mprSyncBtn');
+  const mprExitBtn = document.getElementById('mprExitBtn');
+  
+  if (mprResetBtn) mprResetBtn.addEventListener('click', centerCrosshairToVolume);
+  if (mprSyncBtn) mprSyncBtn.addEventListener('click', syncMPRViewports);
+  if (mprExitBtn) mprExitBtn.addEventListener('click', deactivateMPR3D);
+});
+
+// ====================== END WORKING 3D MPR ======================
+
 
 // Load PACS data
 async function loadPacsData(folderId) {
@@ -1819,7 +1363,7 @@ async function processIndexedDBDicomFiles(folderData, files) {
 
       tempSeries[seriesKey].images.push({
         imageId: imageId,
-        instanceNumber:i + 1,
+        instanceNumber: i + 1,
         fileName: fileRecord.name,
         patientName: folderData.patientName || "Unknown Patient",
         studyDescription: folderData.name || "Local Study",
@@ -2771,11 +2315,19 @@ function changeLayout(layout) {
 
   // 1x1 uses the single #dicomImage; others use the container grid
   if (rows === 1 && cols === 1) {
+    // Hide grid container and clean its cells
     if (container) {
+      // Either hide with display or visibility; display:none is fine here since we will
+      // render into dicomImage and then call resize on dicomImage.
+      container.style.display = "none"; // optional: container.style.visibility = "hidden";
       container.innerHTML = "";
-      container.style.display = "none";
     }
-    if (dicomImage) dicomImage.style.display = "block";
+
+    // Show the single dicomImage without collapsing layout
+    if (dicomImage) {
+      dicomImage.style.display = "block"; // ensure participates in layout
+      dicomImage.style.visibility = "visible"; // or dicomImage.style.opacity = "1";
+    }
 
     ensureEnabled(dicomImage);
     activeViewport = dicomImage;
@@ -2783,18 +2335,31 @@ function changeLayout(layout) {
     // Repaint current image if we have one
     const series = allSeries[currentSeriesId];
     if (series && series.images[currentImageIndex]) {
-      displayImageInto(dicomImage, series.images[currentImageIndex].imageId);
+      const imageId = series.images[currentImageIndex].imageId;
+      displayImageInto(dicomImage, imageId);
+
+      // IMPORTANT: After making the element visible, force cornerstone to recompute size
+      if (window.cornerstone && dicomImage) {
+        window.cornerstone.resize(dicomImage, true);
+      }
+
       setupToolsForViewport(dicomImage);
     }
     return;
   }
 
-  // Grid layout
-  if (dicomImage) dicomImage.style.display = "none";
+  // Grid layout branch
+  // Keep dicomImage in layout but invisible so its size doesn't collapse unexpectedly
+  if (dicomImage) {
+    dicomImage.style.visibility = "hidden"; // or dicomImage.style.opacity = "0";
+    dicomImage.style.display = "block"; // keep block so dimensions remain predictable
+  }
+
   if (!container) {
     console.error("#viewportContainer not found in DOM.");
     return;
   }
+
   container.style.display = "grid";
   container.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
   container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
@@ -2820,13 +2385,20 @@ function changeLayout(layout) {
 
   // Set first grid cell active
   activeGridViewport = 0;
-  activeViewport = gridViewports[0];
+  activeViewport = gridViewports;
 
   // Repaint current image into first cell (if any)
   const series = allSeries[currentSeriesId];
   if (series && series.images[currentImageIndex]) {
     const imageId = series.images[currentImageIndex].imageId;
     displayImageInto(activeViewport, imageId);
+
+    // After creating/showing grid, make sure each viewport has real dimensions from CSS.
+    // If needed, you may call resize on each enabled viewport after it is attached and visible.
+    if (window.cornerstone && activeViewport) {
+      window.cornerstone.resize(activeViewport, true);
+    }
+
     setupToolsForViewport(activeViewport);
   }
 }
@@ -3439,6 +3011,37 @@ window.addEventListener("load", function () {
   setTimeout(setupViewportListeners, 1000);
 });
 
+// Add this debug function at the end of script.js
+function debugCornerstone3D() {
+  console.log("=== Cornerstone3D Debug Info ===");
+  console.log("cornerstoneInitialized:", window.cornerstoneInitialized);
+  console.log("window.cs3d:", !!window.cs3d);
+  console.log("window.cst3d:", !!window.cst3d);
+
+  if (window.cs3d) {
+    console.log("cs3d keys:", Object.keys(window.cs3d).slice(0, 15));
+    console.log("cs3d.RenderingEngine:", !!window.cs3d.RenderingEngine);
+    console.log("cs3d.Enums:", !!window.cs3d.Enums);
+    console.log("cs3d.volumeLoader:", !!window.cs3d.volumeLoader);
+  }
+
+  if (window.cst3d) {
+    console.log("cst3d keys:", Object.keys(window.cst3d).slice(0, 15));
+  }
+
+  const allCornerstone = Object.keys(window).filter(
+    (k) =>
+      k.toLowerCase().includes("cornerstone") ||
+      k.includes("cs") ||
+      k.includes("CS")
+  );
+  console.log("All possible globals:", allCornerstone);
+  console.log("==============================");
+}
+
+// Call this function in browser console to debug: debugCornerstone3D()
+window.debugCornerstone3D = debugCornerstone3D;
+
 // Export global functions
 window.activateTool = activateTool;
 window.applyPreset = applyPreset;
@@ -3449,7 +3052,6 @@ window.showDicomTags = showDicomTags;
 window.exportDicomTags = exportDicomTags;
 window.loadDicomFromIndexedDB = loadDicomFromIndexedDB;
 window.loadDicomFromStorage = loadDicomFromStorage;
-window.activateMPR = activateMPR;
-window.deactivateMPR = deactivateMPR;
-window.mprState = mprState;
-
+window.activateMPR3D = activateMPR3D;
+window.deactivateMPR3D = deactivateMPR3D;
+// window.mpr3DState = mpr3dState;
